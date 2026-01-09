@@ -187,8 +187,10 @@ const StageProgressScreen = ({ route, navigation }: any) => {
     };
 
     const isAdmin = user?.role === 'admin' || user?.role === 'Admin';
-    // Check if user is assigned to ANY task in this phase (for general permissions like chat/todos)
-    const isAssigned = isAdmin || (subTasks && subTasks.some(t => t.assignments && t.assignments.some((a: any) => a.id === user?.id)));
+    // Check if user is assigned to the PHASE itself OR any task in this phase
+    const isAssigned = isAdmin
+        || (phase?.assigned_to === user?.id)
+        || (subTasks && subTasks.some(t => t.assignments && t.assignments.some((a: any) => a.id === user?.id)));
 
     const handleCompleteTask = async (task: any) => {
         // STRICT PERMISSION CHECK: Only Assigned Employee or Admin

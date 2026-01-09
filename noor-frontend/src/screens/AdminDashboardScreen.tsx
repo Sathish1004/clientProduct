@@ -1413,11 +1413,11 @@ const AdminDashboardScreen = () => {
                                         return (
                                             <View key={phase.id} style={styles.phaseContainer}>
                                                 <TouchableOpacity
-                                                    style={[styles.phaseHeader, isExpanded ? styles.phaseHeaderExpanded : styles.phaseHeaderCollapsed]}
+                                                    style={[styles.phaseHeader, isExpanded ? styles.phaseHeaderExpanded : styles.phaseHeaderCollapsed, isMobile && { flexDirection: 'column', alignItems: 'stretch', gap: 12 }]}
                                                     onPress={() => togglePhase(phase.id)}
                                                     activeOpacity={0.9}
                                                 >
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, width: isMobile ? '100%' : 'auto', flex: isMobile ? 0 : 1 }}>
                                                         <View style={styles.phaseBadge}>
                                                             <Text style={styles.phaseBadgeText}>{index + 1}</Text>
                                                         </View>
@@ -1427,7 +1427,7 @@ const AdminDashboardScreen = () => {
                                                         </View>
                                                     </View>
 
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0, paddingLeft: 8 }}>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: isMobile ? 'space-between' : 'flex-end', width: isMobile ? '100%' : 'auto', paddingTop: isMobile ? 8 : 0, borderTopWidth: isMobile ? 1 : 0, borderTopColor: isMobile ? 'rgba(255,255,255,0.2)' : 'transparent' }}>
                                                         <View style={styles.progressPill}>
                                                             <Ionicons name="stats-chart" size={12} color="#8B0000" style={{ marginRight: 4 }} />
                                                             <Text style={styles.progressPillText}>Progress</Text>
@@ -1455,85 +1455,84 @@ const AdminDashboardScreen = () => {
                                                 {isExpanded && (
                                                     <View style={styles.taskList}>
                                                         {tasksInPhase.length > 0 ? (
-                                                            tasksInPhase.map((task) => (
-                                                                <View key={task.id} style={styles.taskItem}>
-                                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 200 }}>
-                                                                        <TouchableOpacity
-                                                                            style={[styles.radioButton, task.status === 'Completed' && styles.radioButtonSelected]}
-                                                                        />
-                                                                        <TouchableOpacity
-                                                                            style={{ flex: 1 }}
-                                                                            onPress={() => {
-                                                                                // Open Stage Progress / Chat View via Modal (to overlay over Project Modal)
-                                                                                setChatPhaseId(phase.id);
-                                                                                setChatTaskId(task.id);
-                                                                                setChatSiteName(selectedSite?.name || 'Site');
-                                                                            }}
-                                                                        >
-                                                                            {task.status === 'waiting_for_approval' && (
-                                                                                <View style={{
-                                                                                    backgroundColor: '#FEF9C3',
-                                                                                    alignSelf: 'flex-start',
-                                                                                    paddingHorizontal: 8,
-                                                                                    paddingVertical: 2,
-                                                                                    borderRadius: 4,
-                                                                                    marginBottom: 4,
-                                                                                    borderWidth: 1,
-                                                                                    borderColor: '#FDE047'
-                                                                                }}>
-                                                                                    <Text style={{ color: '#854D0E', fontSize: 10, fontWeight: 'bold' }}>🟡 Completed – Approval Pending</Text>
-                                                                                </View>
-                                                                            )}
-                                                                            <Text style={styles.taskTitle}>{task.name}</Text>
-                                                                            <Text style={styles.taskSubtitle}>{task.status}</Text>
-                                                                        </TouchableOpacity>
-                                                                    </View>
-
-                                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                                                        {user?.role === 'admin' && (
-                                                                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
-                                                                                {task.assignments && task.assignments.length > 0 ? (
-                                                                                    <>
-                                                                                        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                                                                            {task.assignments.map((assignment: any) => (
-                                                                                                <View key={assignment.id} style={styles.employeeNameBadge}>
-                                                                                                    <Text style={{ fontSize: 10 }}>👷</Text>
-                                                                                                    <Text style={styles.employeeNameText}>
-                                                                                                        {assignment.name ? assignment.name.split(' ')[0] : 'Unknown'}
-                                                                                                    </Text>
-                                                                                                </View>
-                                                                                            ))}
-                                                                                            {task.due_date && (
-                                                                                                <View style={[styles.employeeNameBadge, { backgroundColor: '#F3F4F6', borderColor: '#D1D5DB' }]}>
-                                                                                                    <Text style={{ fontSize: 10 }}>📅</Text>
-                                                                                                    <Text style={[styles.employeeNameText, { color: '#374151' }]}>
-                                                                                                        Due: {new Date(task.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                                                                                                    </Text>
-                                                                                                </View>
-                                                                                            )}
-                                                                                        </View>
-                                                                                    </>
-                                                                                ) : null}
-
-                                                                                <TouchableOpacity
-                                                                                    style={styles.addAssigneeBtn}
-                                                                                    onPress={() => handleAssignTask(task, phase)}
-                                                                                >
-                                                                                    <Ionicons name="add" size={16} color="#8B0000" />
-                                                                                </TouchableOpacity>
+                                                            tasksInPhase.map((task) => <View key={task.id} style={[styles.taskItem, isMobile && { flexDirection: 'column', alignItems: 'stretch', gap: 12 }]}>
+                                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, width: isMobile ? '100%' : 'auto', flex: isMobile ? 0 : 1, minWidth: 200 }}>
+                                                                    <TouchableOpacity
+                                                                        style={[styles.radioButton, task.status === 'Completed' && styles.radioButtonSelected]}
+                                                                    />
+                                                                    <TouchableOpacity
+                                                                        style={{ flex: 1 }}
+                                                                        onPress={() => {
+                                                                            // Open Stage Progress / Chat View via Modal (to overlay over Project Modal)
+                                                                            setChatPhaseId(phase.id);
+                                                                            setChatTaskId(task.id);
+                                                                            setChatSiteName(selectedSite?.name || 'Site');
+                                                                        }}
+                                                                    >
+                                                                        {task.status === 'waiting_for_approval' && (
+                                                                            <View style={{
+                                                                                backgroundColor: '#FEF9C3',
+                                                                                alignSelf: 'flex-start',
+                                                                                paddingHorizontal: 8,
+                                                                                paddingVertical: 2,
+                                                                                borderRadius: 4,
+                                                                                marginBottom: 4,
+                                                                                borderWidth: 1,
+                                                                                borderColor: '#FDE047'
+                                                                            }}>
+                                                                                <Text style={{ color: '#854D0E', fontSize: 10, fontWeight: 'bold' }}>🟡 Completed – Approval Pending</Text>
                                                                             </View>
                                                                         )}
-
-
-
-
-
-                                                                        <TouchableOpacity style={styles.iconButton} onPress={() => confirmDeleteTask(task.id)}>
-                                                                            <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                                                                        </TouchableOpacity>
-                                                                    </View>
+                                                                        <Text style={styles.taskTitle}>{task.name}</Text>
+                                                                        <Text style={styles.taskSubtitle}>{task.status}</Text>
+                                                                    </TouchableOpacity>
                                                                 </View>
-                                                            ))
+
+                                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: isMobile ? 'space-between' : 'flex-end', width: isMobile ? '100%' : 'auto' }}>
+                                                                    {user?.role === 'admin' && (
+                                                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                                                                            {task.assignments && task.assignments.length > 0 ? (
+                                                                                <>
+                                                                                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                                                        {task.assignments.map((assignment: any) => (
+                                                                                            <View key={assignment.id} style={styles.employeeNameBadge}>
+                                                                                                <Text style={{ fontSize: 10 }}>👷</Text>
+                                                                                                <Text style={styles.employeeNameText}>
+                                                                                                    {assignment.name ? assignment.name.split(' ')[0] : 'Unknown'}
+                                                                                                </Text>
+                                                                                            </View>
+                                                                                        ))}
+                                                                                        {task.due_date && (
+                                                                                            <View style={[styles.employeeNameBadge, { backgroundColor: '#F3F4F6', borderColor: '#D1D5DB' }]}>
+                                                                                                <Text style={{ fontSize: 10 }}>📅</Text>
+                                                                                                <Text style={[styles.employeeNameText, { color: '#374151' }]}>
+                                                                                                    Due: {new Date(task.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                                                                </Text>
+                                                                                            </View>
+                                                                                        )}
+                                                                                    </View>
+                                                                                </>
+                                                                            ) : null}
+
+                                                                            <TouchableOpacity
+                                                                                style={styles.addAssigneeBtn}
+                                                                                onPress={() => handleAssignTask(task, phase)}
+                                                                            >
+                                                                                <Ionicons name="pencil" size={16} color="#374151" />
+                                                                            </TouchableOpacity>
+                                                                        </View>
+                                                                    )}
+
+
+
+
+
+                                                                    <TouchableOpacity style={styles.iconButton} onPress={() => confirmDeleteTask(task.id)}>
+                                                                        <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                                                                    </TouchableOpacity>
+                                                                </View>
+                                                            </View>
+                                                            )
                                                         ) : (
                                                             <Text style={styles.noTasksText}>No tasks in this stage</Text>
                                                         )}
@@ -1557,7 +1556,8 @@ const AdminDashboardScreen = () => {
                                     })
                                 )}
                             </View>
-                        )}
+                        )
+                        }
 
                         {activeProjectTab === 'Transactions' && (
                             <View style={styles.tabContentContainer}>

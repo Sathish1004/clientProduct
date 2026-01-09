@@ -25,6 +25,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b9f4469e-8b3b-4944-91e4-15bb57d817b6"
+      }
+    },
+    "owner": "sathish_10"
   }
 }

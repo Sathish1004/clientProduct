@@ -1,58 +1,97 @@
-import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, StatusBar } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, Image, StyleSheet, Animated, SafeAreaView, StatusBar, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
 const HomeScreen = () => {
     const navigation = useNavigation();
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const slideAnim = useRef(new Animated.Value(20)).current;
+    const progressAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        // Staggered animations for a premium feel
+        Animated.sequence([
+            // 1. Fade in Logo
+            Animated.parallel([
+                Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 800,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(slideAnim, {
+                    toValue: 0,
+                    duration: 800,
+                    useNativeDriver: true,
+                }),
+            ]),
+            // 2. Fill Progress Bar
+            Animated.timing(progressAnim, {
+                toValue: 1,
+                duration: 2500,
+                useNativeDriver: false,
+            }),
+        ]).start();
+
+        // Auto-redirect
+        const timer = setTimeout(() => {
+            navigation.navigate('Login' as never);
+        }, 3800);
+
+        return () => clearTimeout(timer);
+    }, []);
+
+    const widthInterpolation = progressAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0%', '100%']
+    });
 
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                {/* Header */}
-                <View style={styles.header}>
-                    <Image
-                        source={require('../../assets/noor-builders-logo.png')}
-                        style={styles.headerLogo}
-                        resizeMode="contain"
-                    />
-                </View>
 
-                {/* Hero Section */}
-                <View style={styles.heroSection}>
-                    <Image
-                        source={require('../../assets/noor-builders-logo.png')}
-                        style={styles.heroLogo}
-                        resizeMode="contain"
-                    />
+            {/* Decorative Top Right Circle */}
+            <View style={styles.decorativeCircleTop} />
 
-                    <Text style={styles.tagline}>Customer Satisfaction Is Our Priority</Text>
-                    <Text style={styles.supportingText}>Building Trust. Delivering Quality.</Text>
+            {/* Decorative Bottom Left Circle */}
+            <View style={styles.decorativeCircleBottom} />
 
-                    {/* Login Buttons */}
-                    <View style={styles.buttonContainer}>
-                        <TouchableOpacity
-                            style={styles.adminButton}
-                            onPress={() => navigation.navigate('Login' as never)}
-                        >
-                            <Text style={styles.adminButtonText}>Admin Login</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={styles.employeeButton}
-                            onPress={() => navigation.navigate('Login' as never)}
-                        >
-                            <Text style={styles.employeeButtonText}>Employee Login</Text>
-                        </TouchableOpacity>
+            <View style={styles.contentContainer}>
+                {/* Animated Logo Section */}
+                <Animated.View style={[styles.centerSection, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                    <View style={styles.logoWrapper}>
+                        <Image
+                            source={require('../../assets/noor-builders-logo.png')}
+                            style={styles.logo}
+                            resizeMode="contain"
+                        />
                     </View>
-                </View>
 
-                {/* Footer */}
-                <View style={styles.footer}>
-                    <Text style={styles.footerText}>© 2026 Noor Builders</Text>
-                    <Text style={styles.footerTagline}>Customer Satisfaction Is Our Priority</Text>
+                    {/* Brand Content */}
+                    <Text style={styles.brandTitle}>NOOR BUILDERS</Text>
+                    <Text style={styles.tagline}>Customer Satisfaction Is Our Priority</Text>
+
+                    <View style={styles.divider} />
+
+                    <Text style={styles.description}>
+                    </Text>
+                </Animated.View>
+
+                {/* Progress Loader Section */}
+                <View style={styles.bottomSection}>
+                    <View style={styles.loaderWrapper}>
+                        <View style={styles.progressBarBackground}>
+                            <Animated.View
+                                style={[
+                                    styles.progressBarFill,
+                                    { width: widthInterpolation }
+                                ]}
+                            />
+                        </View>
+                        <Text style={styles.loadingText}>Initializing Experience...</Text>
+                    </View>
+                    <Text style={styles.copyright}>© 2026 Noor Builders. All rights reserved.</Text>
                 </View>
-            </ScrollView>
+            </View>
         </SafeAreaView>
     );
 };
@@ -61,104 +100,116 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#FFFFFF',
+        overflow: 'hidden',
     },
-    scrollContent: {
-        flexGrow: 1,
+    decorativeCircleTop: {
+        position: 'absolute',
+        top: -100,
+        right: -100,
+        width: 200,
+        height: 200,
+        borderRadius: 100,
+        backgroundColor: '#000000', // Solid Dark Black (Top Right)
     },
-    header: {
-        paddingVertical: 20,
-        paddingHorizontal: 24,
-        backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1,
-        borderBottomColor: '#E5E7EB',
+    decorativeCircleBottom: {
+        position: 'absolute',
+        bottom: -50,
+        left: -50,
+        width: 150,
+        height: 150,
+        borderRadius: 75,
+        backgroundColor: '#000000', // Solid Dark Black (Bottom Left)
     },
-    headerLogo: {
-        width: 180,
-        height: 60,
+    contentContainer: {
+        flex: 1,
+        justifyContent: 'space-between',
+        paddingVertical: 60,
+        paddingHorizontal: 30,
     },
-    heroSection: {
+    centerSection: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        paddingHorizontal: 24,
-        paddingVertical: 60,
-        backgroundColor: '#FAFAFA',
     },
-    heroLogo: {
-        width: 320,
-        height: 320,
-        marginBottom: 32,
+    logoWrapper: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+        elevation: 5,
+        backgroundColor: '#fff',
+        borderRadius: 20,
+        padding: 20,
+        marginBottom: 30,
+    },
+    logo: {
+        width: 180,
+        height: 180,
+    },
+    brandTitle: {
+        fontSize: 28,
+        fontWeight: '800',
+        color: '#111827', // Gray-900
+        letterSpacing: 2,
+        marginBottom: 8,
+        textAlign: 'center',
     },
     tagline: {
-        fontSize: 24,
-        fontWeight: '700',
-        color: '#C62828',
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#C62828', // Brand Red
+        textTransform: 'uppercase',
+        letterSpacing: 1,
         textAlign: 'center',
-        marginBottom: 12,
-        letterSpacing: 0.5,
+        marginBottom: 20,
     },
-    supportingText: {
-        fontSize: 18,
-        fontWeight: '500',
-        color: '#374151',
+    divider: {
+        width: 40,
+        height: 4,
+        backgroundColor: '#E5E7EB', // Gray-200
+        borderRadius: 2,
+        marginBottom: 20,
+    },
+    description: {
+        fontSize: 15,
+        lineHeight: 24,
+        color: '#4B5563', // Gray-600
         textAlign: 'center',
-        marginBottom: 48,
+        maxWidth: 300,
+        fontWeight: '400',
     },
-    buttonContainer: {
+    bottomSection: {
+        alignItems: 'center',
+        gap: 20,
+    },
+    loaderWrapper: {
         width: '100%',
-        maxWidth: 400,
-        gap: 16,
+        maxWidth: 240,
+        alignItems: 'center',
+        gap: 12,
     },
-    adminButton: {
+    progressBarBackground: {
+        width: '100%',
+        height: 6,
+        backgroundColor: '#F3F4F6',
+        borderRadius: 3,
+        overflow: 'hidden',
+    },
+    progressBarFill: {
+        height: '100%',
         backgroundColor: '#C62828',
-        paddingVertical: 16,
-        paddingHorizontal: 32,
-        borderRadius: 8,
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
+        borderRadius: 3,
     },
-    adminButtonText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: '600',
-        letterSpacing: 0.5,
-    },
-    employeeButton: {
-        backgroundColor: '#FFFFFF',
-        paddingVertical: 16,
-        paddingHorizontal: 32,
-        borderRadius: 8,
-        alignItems: 'center',
-        borderWidth: 2,
-        borderColor: '#C62828',
-    },
-    employeeButtonText: {
-        color: '#C62828',
-        fontSize: 16,
-        fontWeight: '600',
-        letterSpacing: 0.5,
-    },
-    footer: {
-        paddingVertical: 32,
-        paddingHorizontal: 24,
-        backgroundColor: '#F9FAFB',
-        borderTopWidth: 1,
-        borderTopColor: '#E5E7EB',
-        alignItems: 'center',
-    },
-    footerText: {
-        fontSize: 14,
-        color: '#6B7280',
-        marginBottom: 8,
-    },
-    footerTagline: {
+    loadingText: {
         fontSize: 12,
         color: '#9CA3AF',
-        fontStyle: 'italic',
+        fontWeight: '600',
+        letterSpacing: 0.5,
+    },
+    copyright: {
+        fontSize: 11,
+        color: '#D1D5DB',
+        marginTop: 10,
     },
 });
 

@@ -1234,3 +1234,146 @@ exports.markNotificationRead = async (req, res) => {
         res.status(500).json({ message: 'Error marking notification read' });
     }
 };
+
+// Get Phase Details (Tasks, Updates, Messages, Todos)
+exports.getPhaseDetails = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'Admin' || req.user.role === 'admin';
+
+        // 1. Get Phase Info
+        const [phases] = await db.query(
+            "SELECT p.*, s.name as site_name FROM phases p JOIN sites s ON p.site_id = s.id WHERE p.id = ?",
+            [id]
+        );
+
+        if (phases.length === 0) return res.status(404).json({ message: 'Phase not found' });
+        const phase = phases[0];
+
+        // 2. Get Tasks (Sub-tasks)
+        // Only fetch tasks for this phase
+        const [tasks] = await db.query(`
+            SELECT t.*,
+            (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', e.id, 'name', e.name))
+             FROM task_assignments ta
+             JOIN employees e ON ta.employee_id = e.id
+             WHERE ta.task_id = t.id) as assignments
+            FROM tasks t
+            WHERE t.phase_id = ?
+            ORDER BY t.created_at ASC
+        `, [id]);
+
+        // 3. Get Stage Updates
+        const [updates] = await db.query(
+            "SELECT * FROM stage_updates WHERE phase_id = ? ORDER BY created_at DESC",
+            [id]
+        );
+
+        // 4. Get Stage Messages
+        // We need to fetch sender name. Sender can be in 'users' (Admin) or 'employees'.
+        // We'll perform a UNION or left join on both if needed, but simpler:
+        // Assume 'users' table works if you sync employee logins to users table or just LEFT JOIN both.
+        // For now, let's try a simple Left Join on users, and if null, maybe it is an employee?
+        // Actually, we don't need complex join if we just store sender_name in message OR fetching it dynamically.
+        // Let's use a subquery for name.
+        const [messages] = await db.query(`
+            SELECT sm.*,
+            COALESCE(u.name, e.name, 'User') as sender_name,
+            COALESCE(u.role, e.role, 'User') as sender_role
+            FROM stage_messages sm
+            LEFT JOIN users u ON sm.sender_id = u.id
+            LEFT JOIN employees e ON sm.sender_id = e.id
+            WHERE sm.phase_id = ?
+            ORDER BY sm.created_at ASC
+        `, [id]);
+
+        // 5. Get Stage Todos
+        const [todos] = await db.query(
+            "SELECT * FROM stage_todos WHERE phase_id = ? ORDER BY created_at DESC",
+            [id]
+        );
+
+        res.json({
+            phase,
+            tasks,
+            updates,
+            messages,
+            todos
+        });
+
+    } catch (error) {
+        console.error('Error fetching phase details:', error);
+        res.status(500).json({ message: 'Error fetching details' });
+    }
+};
+
+// Add Phase Update
+exports.addPhaseUpdate = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message, progress, previous_progress } = req.body;
+        const employeeId = req.user.id;
+        // Get employee name
+        const [emps] = await db.query("SELECT name FROM employees WHERE id = ?", [employeeId]);
+        const employeeName = emps.length > 0 ? emps[0].name : 'Admin'; // Fallback
+
+        await db.query(
+            "INSERT INTO stage_updates (phase_id, employee_id, employee_name, message, previous_progress, new_progress) VALUES (?, ?, ?, ?, ?, ?)",
+            [id, employeeId, employeeName, message || 'Progress Update', previous_progress || 0, progress]
+        );
+
+        // Update Phase Progress
+        await db.query("UPDATE phases SET progress = ? WHERE id = ?", [progress, id]);
+
+        // NOTIFICATION: Task/Stage Update
+        if (req.user.role !== 'Admin' && req.user.role !== 'admin') {
+            const [phData] = await db.query('SELECT site_id FROM phases WHERE id = ?', [id]);
+            if (phData.length > 0) {
+                await createNotification(
+                    phData[0].site_id,
+                    id,
+                    null, // task_id null for stage update
+                    employeeId,
+                    'TASK_UPDATE', // Reusing type
+                    `Stage updated: ${progress}% - ${message}`
+                );
+            }
+        }
+
+        res.json({ message: 'Update added' });
+    } catch (error) {
+        console.error('Error adding phase update:', error);
+        res.status(500).json({ message: 'Error adding update' });
+    }
+};
+
+// Add Phase Todo
+exports.addPhaseTodo = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { content } = req.body;
+        await db.query("INSERT INTO stage_todos (phase_id, content) VALUES (?, ?)", [id, content]);
+        res.json({ message: 'Todo added' });
+    } catch (error) {
+        console.error('Error adding todo:', error);
+        res.status(500).json({ message: 'Error adding todo' });
+    }
+};
+
+// Toggle Phase Todo
+exports.togglePhaseTodo = async (req, res) => {
+    try {
+        const { todoId } = req.params;
+        const [rows] = await db.query("SELECT is_completed FROM stage_todos WHERE id = ?", [todoId]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Todo not found' });
+
+        const newState = !rows[0].is_completed;
+        await db.query("UPDATE stage_todos SET is_completed = ? WHERE id = ?", [newState, todoId]);
+
+        res.json({ message: 'Todo updated', is_completed: newState });
+    } catch (error) {
+        console.error('Error toggling todo:', error);
+        res.status(500).json({ message: 'Error toggling todo' });
+    }
+};

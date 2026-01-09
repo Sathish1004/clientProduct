@@ -1,16 +1,106 @@
 
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
     View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity,
-    TextInput, ActivityIndicator, Image, Modal, Platform, Alert, PermissionsAndroid
+    TextInput, ActivityIndicator, Image, Modal, Platform, Alert, PermissionsAndroid, KeyboardAvoidingView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio, Video, ResizeMode } from 'expo-av';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+
 import { AuthContext } from '../context/AuthContext';
 import api from '../services/api';
 import { useFocusEffect } from '@react-navigation/native';
+
+const GalleryAudioItem = ({ uri }: { uri: string }) => {
+    const [sound, setSound] = useState<Audio.Sound | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [duration, setDuration] = useState(0);
+    const [position, setPosition] = useState(0);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+        return () => {
+            if (sound) sound.unloadAsync();
+        };
+    }, [sound]);
+
+    const handlePlayPause = async () => {
+        if (isLoading) return;
+
+        if (!sound) {
+            setIsLoading(true);
+            try {
+                const { sound: newSound, status } = await Audio.Sound.createAsync(
+                    { uri },
+                    { shouldPlay: true },
+                    onPlaybackStatusUpdate
+                );
+                setSound(newSound);
+                setIsPlaying(true);
+                if (status.isLoaded) {
+                    setDuration(status.durationMillis || 0);
+                }
+            } catch (error) {
+                console.error("Audio load error", error);
+            } finally {
+                setIsLoading(false);
+            }
+        } else {
+            if (isPlaying) {
+                await sound.pauseAsync();
+                setIsPlaying(false);
+            } else {
+                await sound.playAsync();
+                setIsPlaying(true);
+            }
+        }
+    };
+
+    const onPlaybackStatusUpdate = (status: any) => {
+        if (status.isLoaded) {
+            setPosition(status.positionMillis);
+            setDuration(status.durationMillis || 0);
+            setIsPlaying(status.isPlaying);
+            if (status.didJustFinish) {
+                setIsPlaying(false);
+                sound?.setPositionAsync(0);
+            }
+        }
+    };
+
+    const formatTime = (millis: number) => {
+        const totalSeconds = Math.floor(millis / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    };
+
+    return (
+        <View style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF2F2' }}>
+            <TouchableOpacity onPress={handlePlayPause} disabled={isLoading} style={{ marginBottom: 6 }}>
+                {isLoading ? (
+                    <ActivityIndicator size="small" color="#B91C1C" />
+                ) : (
+                    <Ionicons name={isPlaying ? "pause-circle" : "play-circle"} size={44} color="#B91C1C" />
+                )}
+            </TouchableOpacity>
+
+            <View style={{ width: '80%', height: 4, backgroundColor: '#E5E7EB', borderRadius: 2, marginBottom: 4, overflow: 'hidden' }}>
+                <View style={{
+                    width: `${duration > 0 ? (position / duration) * 100 : 0}%`,
+                    height: '100%',
+                    backgroundColor: '#B91C1C'
+                }} />
+            </View>
+
+            <Text style={{ fontSize: 10, color: '#991B1B', fontWeight: '600' }}>
+                {formatTime(position)} / {formatTime(duration)}
+            </Text>
+        </View>
+    );
+};
+
 
 const StageProgressScreen = ({ route, navigation }: any) => {
     const { phaseId, taskId, siteName } = route.params || {};
@@ -31,28 +121,56 @@ const StageProgressScreen = ({ route, navigation }: any) => {
     const [mediaType, setMediaType] = useState<'image' | 'video' | 'audio' | null>(null);
     const [recording, setRecording] = useState<Audio.Recording | undefined>(undefined);
     const [cameraVisible, setCameraVisible] = useState(false);
-    const [cameraRef, setCameraRef] = useState<any>(null);
-    const [isRecordingVideo, setIsRecordingVideo] = useState(false);
-    const [permission, requestPermission] = useCameraPermissions();
+    // Video state removed
+    const [cameraRef, setCameraRef] = useState<any>(null); // Kept if needed or remove entirely? Remove entirely.
+    // Actually, remove all lines 33-36
+
 
     // Update Modal
     const [updateModalVisible, setUpdateModalVisible] = useState(false);
     const [newProgress, setNewProgress] = useState('');
     const [updateMessage, setUpdateMessage] = useState('');
     const [submitLoading, setSubmitLoading] = useState(false);
+    const [viewMode, setViewMode] = useState<'chat' | 'gallery'>('chat');
+
+    // Image Description Modal
+    const [imageUploadModalVisible, setImageUploadModalVisible] = useState(false);
+    const [imageDescription, setImageDescription] = useState('');
+    const [recordingDuration, setRecordingDuration] = useState(0);
+    const [playbackSound, setPlaybackSound] = useState<Audio.Sound | null>(null);
+    const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+    const recordingInterval = useRef<any>(null);
+
+    // Change Request Modal
+    const [changeRequestModalVisible, setChangeRequestModalVisible] = useState(false);
+    const [changeRequestReason, setChangeRequestReason] = useState('');
 
     const pickImage = async () => {
         let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images', 'videos'],
+            mediaTypes: ['images'],
             allowsEditing: true,
             quality: 1,
         });
 
         if (!result.canceled) {
             setMediaUri(result.assets[0].uri);
-            setMediaType(result.assets[0].type === 'video' ? 'video' : 'image');
+            setMediaType('image');
+            setImageUploadModalVisible(true); // Open modal for images
         }
     };
+
+    const handleSendImageWithDescription = async () => {
+        // Temporarily set message text to description for sending, then clear it
+        // Actually, handleSendMessage uses messageText state. 
+        // We should update messageText state, then call handleSendMessage, but state update is async.
+        // Better: refactor handleSendMessage to accept args, or just set it and valid manually.
+        // Let's refactor handleSendMessage slightly to accept optional overrides.
+        await handleSendMessage(imageDescription);
+        setImageUploadModalVisible(false);
+        setImageDescription('');
+    };
+
+
 
     const startRecording = async () => {
         try {
@@ -62,6 +180,19 @@ const StageProgressScreen = ({ route, navigation }: any) => {
             await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
             const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
             setRecording(recording);
+
+            // Start Timer
+            setRecordingDuration(0);
+            recordingInterval.current = setInterval(async () => {
+                setRecordingDuration(prev => {
+                    if (prev >= 30) {
+                        stopRecording(); // Auto stop at 30s
+                        return 30;
+                    }
+                    return prev + 1;
+                });
+            }, 1000);
+
         } catch (err) {
             console.error('Failed to start recording', err);
         }
@@ -69,32 +200,48 @@ const StageProgressScreen = ({ route, navigation }: any) => {
 
     const stopRecording = async () => {
         setRecording(undefined);
+        if (recordingInterval.current) {
+            clearInterval(recordingInterval.current);
+            recordingInterval.current = null;
+        }
+
         await recording?.stopAndUnloadAsync();
         const uri = recording?.getURI();
         if (uri) {
             setMediaUri(uri);
             setMediaType('audio');
+            setImageUploadModalVisible(true); // Open modal for audio
         }
     };
 
-    const handleVideoRecord = async () => {
-        if (cameraRef && !isRecordingVideo) {
-            setIsRecordingVideo(true);
-            try {
-                const video = await cameraRef.recordAsync({ maxDuration: 60 });
-                setMediaUri(video.uri);
-                setMediaType('video');
-                setCameraVisible(false);
-                setIsRecordingVideo(false);
-            } catch (e) {
-                console.error(e);
-                setIsRecordingVideo(false);
+    const playPreview = async () => {
+        if (!mediaUri) return;
+
+        try {
+            if (playbackSound) {
+                await playbackSound.unloadAsync();
             }
-        } else if (isRecordingVideo) {
-            cameraRef?.stopRecording();
-            setIsRecordingVideo(false);
+
+            const { sound } = await Audio.Sound.createAsync(
+                { uri: mediaUri },
+                { shouldPlay: true }
+            );
+
+            setPlaybackSound(sound);
+            setIsPlayingPreview(true);
+
+            sound.setOnPlaybackStatusUpdate((status) => {
+                if (status.isLoaded && status.didJustFinish) {
+                    setIsPlayingPreview(false);
+                }
+            });
+        } catch (error) {
+            console.error('Error playing sound', error);
+            Alert.alert("Error", "Could not play audio preview");
         }
     };
+
+
 
     const uploadMedia = async (uri: string, type: string) => {
         try {
@@ -159,23 +306,65 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                 setPhase({
                     id: taskData.phase_id,
                     name: `Stage: ${taskData.phase_name || 'Details'}`,
-                    site_name: taskData.site_name
+                    site_name: taskData.site_name,
+                    start_date: taskData.start_date,
+                    due_date: taskData.due_date,
+                    status: taskData.status,
+                    progress: taskData.phase_progress // Correctly inherit Phase progress
                 });
 
                 // Isolate Task
                 setSubTasks([taskData]);
                 setTodos(response.data.todos || []);
-                setUpdates(response.data.updates || []);
+
+                // Filter out duplicate consecutive updates
+                const allUpdates = [...(response.data.updates || []), ...(response.data.phase_updates || [])];
+                const uniqueUpdates = allUpdates.filter((update, index, arr) => {
+                    if (index === 0) return true;
+                    const prev = arr[index - 1];
+                    // Remove if same message and same progress values as previous
+                    return !(update.message === prev.message &&
+                        update.previous_progress === prev.previous_progress &&
+                        update.new_progress === prev.new_progress);
+                });
+                setUpdates(uniqueUpdates);
+
                 setMessages(response.data.messages || []);
 
             } else {
                 // STAGE MODE (Legacy)
                 console.log(`[StageProgress] Fetching Phase Details for ID: ${phaseId}`);
                 const response = await api.get(`/phases/${phaseId}/details`);
-                setPhase(response.data.phase);
+
+                const phaseData = response.data.phase;
+                const tasks = response.data.subTasks || [];
+
+                // Derive Dates if missing on Phase
+                if (!phaseData.start_date && tasks.length > 0) {
+                    const sortedStarts = tasks.map((t: any) => t.start_date).filter(Boolean).sort();
+                    if (sortedStarts.length > 0) phaseData.start_date = sortedStarts[0];
+                }
+                if (!phaseData.due_date && tasks.length > 0) {
+                    const sortedDues = tasks.map((t: any) => t.due_date).filter(Boolean).sort();
+                    if (sortedDues.length > 0) phaseData.due_date = sortedDues[sortedDues.length - 1];
+                }
+
+                setPhase(phaseData);
                 setTodos(response.data.todos);
-                setSubTasks(response.data.subTasks || []);
-                setUpdates(response.data.updates);
+                setSubTasks(tasks);
+
+                // Filter out duplicate consecutive updates
+                const allUpdates = response.data.updates || [];
+                const uniqueUpdates = allUpdates.filter((update: any, index: number, arr: any[]) => {
+                    if (index === 0) return true;
+                    const prev = arr[index - 1];
+                    // Remove if same message and same progress values as previous
+                    return !(update.message === prev.message &&
+                        update.previous_progress === prev.previous_progress &&
+                        update.new_progress === prev.new_progress);
+                });
+                setUpdates(uniqueUpdates);
+
                 setMessages(response.data.messages);
             }
         } catch (error) {
@@ -189,12 +378,12 @@ const StageProgressScreen = ({ route, navigation }: any) => {
     const isAdmin = user?.role === 'admin' || user?.role === 'Admin';
     // Check if user is assigned to the PHASE itself OR any task in this phase
     const isAssigned = isAdmin
-        || (phase?.assigned_to === user?.id)
-        || (subTasks && subTasks.some(t => t.assignments && t.assignments.some((a: any) => a.id === user?.id)));
+        || (user?.id && phase?.assigned_to && String(phase.assigned_to) === String(user.id))
+        || (subTasks && subTasks.some(t => t.assignments && t.assignments.some((a: any) => String(a.id) === String(user?.id))));
 
     const handleCompleteTask = async (task: any) => {
         // STRICT PERMISSION CHECK: Only Assigned Employee or Admin
-        const userIsAssigned = task.assignments && task.assignments.some((a: any) => a.id === user?.id);
+        const userIsAssigned = task.assignments && task.assignments.some((a: any) => String(a.id) === String(user?.id));
 
         if (!isAdmin && !userIsAssigned) {
             Alert.alert("Restricted Access", `This task is restricted to assigned employees only.`);
@@ -239,6 +428,83 @@ const StageProgressScreen = ({ route, navigation }: any) => {
         } catch (error) {
             console.error('Error rejecting task:', error);
             Alert.alert("Error", "Failed to reject task");
+        }
+    };
+
+    const handleMarkComplete = async () => {
+        const currentPhaseId = phaseId || phase?.id;
+        if (!currentPhaseId) {
+            Alert.alert("Error", "Phase ID not found");
+            return;
+        }
+
+        // Prevent multiple submissions
+        if (submitLoading) return;
+
+        try {
+            setSubmitLoading(true);
+            // Submit as 100% complete for approval
+            await api.post(`/phases/${currentPhaseId}/updates`, {
+                progress: 100,
+                message: 'Work completed - Ready for admin approval'
+            });
+
+            setPhase((prev: any) => ({ ...prev, status: 'waiting_for_approval', progress: 100 }));
+            Alert.alert("Success", "Work submitted for admin approval");
+            fetchData();
+        } catch (error) {
+            console.error('Error marking complete:', error);
+            Alert.alert("Error", "Failed to submit for approval");
+        } finally {
+            setSubmitLoading(false);
+        }
+    };
+
+    const handleApprovePhase = async () => {
+        const currentPhaseId = phaseId || phase?.id;
+        if (!currentPhaseId) {
+            Alert.alert("Error", "Phase ID not found");
+            return;
+        }
+
+        try {
+            await api.put(`/phases/${currentPhaseId}/approve`);
+            setPhase((prev: any) => ({ ...prev, status: 'Completed' }));
+            Alert.alert("✅ Good work!", "Phase approved and marked as completed");
+            fetchData();
+        } catch (error) {
+            console.error('Error approving phase:', error);
+            Alert.alert("Error", "Failed to approve phase");
+        }
+    };
+
+    const handleRejectPhase = () => {
+        // Open modal to get reason
+        setChangeRequestModalVisible(true);
+    };
+
+    const submitChangeRequest = async () => {
+        const currentPhaseId = phaseId || phase?.id;
+        if (!currentPhaseId) {
+            Alert.alert("Error", "Phase ID not found");
+            return;
+        }
+
+        if (!changeRequestReason.trim()) {
+            Alert.alert("Required", "Please enter a reason for requesting changes");
+            return;
+        }
+
+        try {
+            await api.put(`/phases/${currentPhaseId}/reject`, { reason: changeRequestReason });
+            setPhase((prev: any) => ({ ...prev, status: 'in_progress', progress: 0 }));
+            setChangeRequestModalVisible(false);
+            setChangeRequestReason('');
+            Alert.alert("✓ Changes Requested", "Phase sent back for revisions");
+            fetchData();
+        } catch (error) {
+            console.error('Error rejecting phase:', error);
+            Alert.alert("Error", "Failed to request changes");
         }
     };
 
@@ -322,8 +588,9 @@ const StageProgressScreen = ({ route, navigation }: any) => {
 
 
 
-    const handleSendMessage = async () => {
-        if (!messageText.trim() && !mediaUri && !recording) return;
+    const handleSendMessage = async (customContent?: string) => {
+        const contentToSend = customContent !== undefined ? customContent : messageText;
+        if (!contentToSend.trim() && !mediaUri && !recording) return;
 
         try {
             let uploadedUrl = null;
@@ -332,7 +599,7 @@ const StageProgressScreen = ({ route, navigation }: any) => {
             }
 
             const payload = {
-                content: messageText,
+                content: contentToSend,
                 type: mediaType || 'text',
                 mediaUrl: uploadedUrl
             };
@@ -357,29 +624,25 @@ const StageProgressScreen = ({ route, navigation }: any) => {
         }
     };
 
+    // ... (rest of code)
+
+
+
+
+
     const getStatusColor = (status: string) => {
-        if (status === 'achieved') return '#10B981'; // Green
+        if (status === 'Completed' || status === 'achieved') return '#10B981'; // Green
         if (status === 'waiting_for_approval') return '#F59E0B'; // Yellow
         if (status === 'delayed') return '#EF4444'; // Red
-        if (status === 'not_started' || status === 'pending') return '#9CA3AF'; // Gray
+        if (status === 'Not Started' || status === 'not_started' || status === 'pending') return '#9CA3AF'; // Gray
         return '#3B82F6'; // Blue (In Progress)
-    };
-
-    const handleApprovePhase = async () => {
-        try {
-            await api.put(`/phases/${phaseId}/approve`);
-            setPhase((prev: any) => ({ ...prev, status: 'achieved', progress: 100 }));
-            Alert.alert("Success", "Stage marked as Achieved");
-        } catch (error) {
-            console.error('Error approving phase:', error);
-            Alert.alert("Error", "Failed to approve phase");
-        }
     };
 
     const displayStatus = (status: string) => {
         if (status === 'waiting_for_approval') return 'Waiting for Approval';
-        if (status === 'achieved') return 'Achieved';
-        if (status === 'not_started' || status === 'pending') return 'Not Started';
+        if (status === 'Completed') return 'Completed';
+        if (status === 'achieved') return 'Completed';
+        if (status === 'Not Started' || status === 'not_started' || status === 'pending') return 'Not Started';
         return status?.replace('_', ' ') || 'In Progress';
     };
 
@@ -392,13 +655,37 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                 </TouchableOpacity>
                 <Text style={styles.headerTitle} numberOfLines={1}>{phase?.name || 'Stage Progress'}</Text>
 
-                {/* Admin Approve Action */}
+                {/* Admin Approval Actions */}
                 {isAdmin && phase?.status === 'waiting_for_approval' ? (
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                            style={{ backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}
+                            onPress={handleApprovePhase}
+                        >
+                            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>✓ Approve</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={{ backgroundColor: '#EF4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}
+                            onPress={handleRejectPhase}
+                        >
+                            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>✗ Changes</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : !isAdmin && phase?.status !== 'Completed' && phase?.status !== 'waiting_for_approval' ? (
                     <TouchableOpacity
-                        style={{ backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}
-                        onPress={handleApprovePhase}
+                        style={{
+                            backgroundColor: submitLoading ? '#9CA3AF' : '#8B0000',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 20,
+                            opacity: submitLoading ? 0.6 : 1
+                        }}
+                        onPress={handleMarkComplete}
+                        disabled={submitLoading}
                     >
-                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>Approve / Achieved</Text>
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 12 }}>
+                            {submitLoading ? 'Submitting...' : 'Mark Complete'}
+                        </Text>
                     </TouchableOpacity>
                 ) : (
                     <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -416,6 +703,25 @@ const StageProgressScreen = ({ route, navigation }: any) => {
 
                 {/* Assigned Section */}
                 <View style={styles.sectionCard}>
+                    {/* Waiting for Approval Banner */}
+                    {phase?.status === 'waiting_for_approval' && (
+                        <View style={{
+                            backgroundColor: '#FEF3C7',
+                            padding: 12,
+                            borderRadius: 8,
+                            marginBottom: 12,
+                            borderLeftWidth: 4,
+                            borderLeftColor: '#F59E0B'
+                        }}>
+                            <Text style={{ color: '#92400E', fontWeight: '600', fontSize: 14 }}>
+                                ⏳ Submitted for Admin Approval
+                            </Text>
+                            <Text style={{ color: '#78350F', fontSize: 12, marginTop: 4 }}>
+                                Your work has been submitted and is waiting for admin review.
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={styles.assignedRow}>
                         {/* Phase Header - Removed Assignment Badge */}
                         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(phase?.status) + '20', alignSelf: 'flex-start' }]}>
@@ -518,134 +824,178 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                     {subTasks.length === 0 && <Text style={styles.emptyTextSimple}>No tasks defined</Text>}
                 </View>
 
-                {/* Ad-hoc Todo List */}
-                <View style={[styles.sectionCard, { marginTop: 16 }]}>
-                    <View style={styles.sectionHeader}>
-                        <Text style={styles.sectionTitle}>ADDITIONAL TO-DOS</Text>
-                        <TouchableOpacity onPress={handleAddTodo}>
-                            <Ionicons name="add-circle" size={24} color="#8B0000" />
-                        </TouchableOpacity>
-                    </View>
 
-                    <View style={styles.addTodoRow}>
-                        <TextInput
-                            style={styles.todoInput}
-                            placeholder="Add item..."
-                            value={todoText}
-                            onChangeText={setTodoText}
-                            onSubmitEditing={handleAddTodo}
-                        />
-                    </View>
-
-                    {todos.map((todo, index) => (
-                        <TouchableOpacity
-                            key={index}
-                            style={styles.todoItem}
-                            onPress={() => handleToggleTodo(todo.id)}
-                        >
-                            <Ionicons
-                                name={todo.is_completed ? "checkbox" : "square-outline"}
-                                size={20}
-                                color={todo.is_completed ? "#10B981" : "#9CA3AF"}
-                            />
-                            <Text style={[styles.todoText, todo.is_completed && styles.todoTextDone]}>
-                                {todo.content}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                    {todos.length === 0 && <Text style={styles.emptyTextSimple}>No items</Text>}
-                </View>
 
                 {/* Unified Activity Feed */}
+                {/* Unified Activity Feed */}
                 <View style={styles.feedContainer}>
-                    <Text style={styles.sectionTitle}>ACTIVITY & UPDATES</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                        <Text style={styles.sectionTitle}>ACTIVITY & UPDATES</Text>
+                        <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, padding: 2 }}>
+                            <TouchableOpacity
+                                onPress={() => setViewMode('chat')}
+                                style={{
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 12,
+                                    backgroundColor: viewMode === 'chat' ? '#FFF' : 'transparent',
+                                    borderRadius: 6,
+                                    elevation: viewMode === 'chat' ? 1 : 0
+                                }}
+                            >
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: viewMode === 'chat' ? '#111827' : '#6B7280' }}>Msg</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={() => setViewMode('gallery')}
+                                style={{
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 12,
+                                    backgroundColor: viewMode === 'gallery' ? '#FFF' : 'transparent',
+                                    borderRadius: 6,
+                                    elevation: viewMode === 'gallery' ? 1 : 0
+                                }}
+                            >
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: viewMode === 'gallery' ? '#111827' : '#6B7280' }}>Gallery</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
 
-                    {(() => {
-                        const feed = [
-                            ...updates.map(u => ({ ...u, type: 'update' })),
-                            ...messages.map(m => ({ ...m, type: 'message' }))
-                        ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-                        if (feed.length === 0) {
-                            return <Text style={styles.emptyTextSimple}>No activity yet</Text>;
-                        }
-
-                        return feed.map((item, idx) => {
-                            if (item.type === 'update') {
-                                return (
-                                    <View key={`u-${idx}`} style={styles.updateCard}>
-                                        <View style={styles.updateHeader}>
-                                            <Text style={styles.updateUser}>{item.employee_name || 'Employee'}</Text>
-                                            <Text style={styles.updateTime}>{new Date(item.created_at).toLocaleString()}</Text>
-                                        </View>
-                                        <View style={styles.progressChangeBadge}>
-                                            <Text style={styles.progressChangeText}>
-                                                {item.previous_progress}% → {item.new_progress}%
-                                            </Text>
-                                        </View>
-                                        <Text style={styles.updateMessage}>{item.message}</Text>
-                                    </View>
-                                );
-                            } else {
-                                const isMe = user && item.sender_id === user.id;
-                                return (
-                                    <View key={`m-${idx}`} style={[
-                                        styles.messageBubble,
-                                        isMe ? styles.myMessage : styles.otherMessage
-                                    ]}>
-                                        {!isMe && <Text style={styles.senderName}>{item.sender_name}</Text>}
-
-                                        {/* Text Content */}
-                                        {item.content ? (
-                                            <Text style={isMe ? styles.myMessageText : styles.otherMessageText}>
-                                                {item.content}
-                                            </Text>
-                                        ) : null}
-
-                                        {/* Media Content */}
-                                        {item.media_url && (
-                                            <View style={{ marginTop: item.content ? 8 : 0 }}>
-                                                {item.type === 'image' && (
-                                                    <Image
-                                                        source={{ uri: api.defaults.baseURL + item.media_url }}
-                                                        style={{ width: 200, height: 200, borderRadius: 8 }}
-                                                        resizeMode="cover"
-                                                    />
-                                                )}
-                                                {item.type === 'video' && (
-                                                    <Video
-                                                        source={{ uri: api.defaults.baseURL + item.media_url }}
-                                                        style={{ width: 200, height: 200, borderRadius: 8 }}
-                                                        useNativeControls
-                                                        resizeMode={ResizeMode.CONTAIN}
-                                                        isLooping={false}
-                                                    />
-                                                )}
-                                                {item.type === 'audio' && (
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.1)', padding: 8, borderRadius: 16 }}>
-                                                        <Ionicons name="mic" size={24} color={isMe ? "#FFF" : "#374151"} />
-                                                        <Text style={{ color: isMe ? "#FFF" : "#374151", fontSize: 12 }}>Audio Note (Tap to play)</Text>
-                                                        {/* Note: Full audio player implementation requires state tracking for each message. For now, we show a placeholder player. */}
-                                                    </View>
-                                                )}
-                                            </View>
+                    {viewMode === 'gallery' ? (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                            {messages.filter(m => m.media_url && (m.type === 'image' || m.type === 'video' || m.type === 'audio')).length === 0 ? (
+                                <Text style={styles.emptyTextSimple}>No media found</Text>
+                            ) : (
+                                messages.filter(m => m.media_url && (m.type === 'image' || m.type === 'video' || m.type === 'audio')).map((item, idx) => (
+                                    <View key={`gal-${idx}`} style={{ width: '31%', aspectRatio: 1, borderRadius: 8, overflow: 'hidden', backgroundColor: '#F3F4F6', position: 'relative' }}>
+                                        {item.type === 'image' ? (
+                                            <Image
+                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                                style={{ width: '100%', height: '100%' }}
+                                                resizeMode="cover"
+                                            />
+                                        ) : item.type === 'video' ? (
+                                            <Video
+                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                                style={{ width: '100%', height: '100%' }}
+                                                resizeMode={ResizeMode.COVER}
+                                            />
+                                        ) : (
+                                            <GalleryAudioItem uri={(api.defaults.baseURL?.replace('/api', '') || '') + item.media_url} />
                                         )}
-
-                                        <Text style={styles.messageTime}>
-                                            {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </Text>
+                                        {/* Caption Overlay */}
+                                        {item.content ? (
+                                            <View style={{
+                                                position: 'absolute', bottom: 0, left: 0, right: 0,
+                                                backgroundColor: 'rgba(0,0,0,0.6)', padding: 4
+                                            }}>
+                                                <Text numberOfLines={2} style={{ color: '#FFF', fontSize: 10 }}>{item.content}</Text>
+                                            </View>
+                                        ) : null}
                                     </View>
-                                );
+                                ))
+                            )}
+                        </View>
+                    ) : (
+                        (() => {
+                            const feed = [
+                                ...updates.map(u => ({ ...u, type: 'update' })),
+                                // Filter out messages with media_url so they only appear in Gallery
+                                ...messages.filter(m => !m.media_url).map(m => ({ ...m, type: 'message' }))
+                            ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+                            if (feed.length === 0) {
+                                return <Text style={styles.emptyTextSimple}>No activity yet</Text>;
                             }
-                        });
-                    })()}
+
+                            return feed.map((item, idx) => {
+                                if (item.type === 'update') {
+                                    return (
+                                        <View key={`u-${idx}`} style={styles.updateCard}>
+                                            <View style={styles.updateHeader}>
+                                                <Text style={styles.updateUser}>{item.employee_name || 'Employee'}</Text>
+                                                <Text style={styles.updateTime}>{new Date(item.created_at).toLocaleString()}</Text>
+                                            </View>
+                                            <View style={styles.progressChangeBadge}>
+                                                <Text style={styles.progressChangeText}>
+                                                    {item.previous_progress}% → {item.new_progress}%
+                                                </Text>
+                                            </View>
+                                            <Text style={styles.updateMessage}>{item.message}</Text>
+                                        </View>
+                                    );
+                                } else {
+                                    const isMe = user && item.sender_id === user.id;
+                                    return (
+                                        <View key={`m-${idx}`} style={[
+                                            styles.messageBubble,
+                                            isMe ? styles.myMessage : styles.otherMessage
+                                        ]}>
+                                            {!isMe && <Text style={styles.senderName}>{item.sender_name}</Text>}
+
+                                            {/* Media Content with Caption Overlay */}
+                                            {item.media_url ? (
+                                                <View>
+                                                    <View style={{ borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
+                                                        {item.type === 'image' && (
+                                                            <Image
+                                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                                                style={{ width: 220, height: 220, backgroundColor: '#EEE' }}
+                                                                resizeMode="cover"
+                                                            />
+                                                        )}
+                                                        {item.type === 'video' && (
+                                                            <Video
+                                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                                                style={{ width: 220, height: 220, backgroundColor: '#000' }}
+                                                                useNativeControls
+                                                                resizeMode={ResizeMode.CONTAIN}
+                                                                isLooping={false}
+                                                            />
+                                                        )}
+
+                                                        {/* Caption as Overlay for Media */}
+                                                        {item.content ? (
+                                                            <View style={{
+                                                                position: 'absolute', bottom: 0, left: 0, right: 0,
+                                                                backgroundColor: 'rgba(0,0,0,0.5)', padding: 8
+                                                            }}>
+                                                                <Text style={{ color: '#FFF', fontSize: 13 }}>{item.content}</Text>
+                                                            </View>
+                                                        ) : null}
+                                                    </View>
+
+                                                    {item.type === 'audio' && (
+                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.1)', padding: 8, borderRadius: 16, marginTop: 4 }}>
+                                                            <Ionicons name="mic" size={24} color={isMe ? "#FFF" : "#374151"} />
+                                                            <Text style={{ color: isMe ? "#FFF" : "#374151", fontSize: 12 }}>Audio Note (Tap to play)</Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                            ) : (
+                                                /* Text Only Message */
+                                                item.content ? (
+                                                    <Text style={isMe ? styles.myMessageText : styles.otherMessageText}>
+                                                        {item.content}
+                                                    </Text>
+                                                ) : null
+                                            )}
+
+                                            <Text style={styles.messageTime}>
+                                                {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </Text>
+                                        </View>
+                                    );
+                                }
+                            });
+                        })()
+                    )}
                 </View>
 
             </ScrollView>
 
             {/* Bottom Input Area or Unassigned Banner */}
             {/* Show Input if User is Admin OR Assigned to at least one task */}
-            {(isAdmin || isAssigned) ? (
+            {/* Show Input for any logged in user (Admin or Employee) */}
+            {(user) ? (
                 <>
                     {mediaUri && (
                         <View style={styles.mediaPreview}>
@@ -656,66 +1006,87 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                         </View>
                     )}
 
-                    <View style={styles.inputArea}>
-                        <TouchableOpacity
-                            style={styles.addProgressButton}
-                            onPress={() => setUpdateModalVisible(true)}
-                        >
-                            <Ionicons name="add" size={20} color="#FFF" />
-                            <Text style={styles.addProgressText}>Add Progress</Text>
-                        </TouchableOpacity>
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === "ios" ? "padding" : "height"}
+                        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+                        style={{ flexShrink: 1 }} // Allow it to take available space but shrink if needed
+                    >
+                        <View style={styles.inputArea}>
+                            {!isAdmin && (
+                                <TouchableOpacity
+                                    style={styles.addProgressButton}
+                                    onPress={() => setUpdateModalVisible(true)}
+                                >
+                                    <Ionicons name="add" size={20} color="#FFF" />
+                                    <Text style={styles.addProgressText}>Add Progress</Text>
+                                </TouchableOpacity>
+                            )}
 
-                        {/* Message Input */}
-                        <View style={styles.messageInputContainer}>
-                            <TextInput
-                                style={styles.messageInput}
-                                placeholder="Message..."
-                                value={messageText}
-                                onChangeText={setMessageText}
-                            />
-                            <TouchableOpacity onPress={pickImage}>
-                                <Ionicons name="image-outline" size={20} color="#6B7280" style={{ marginRight: 8 }} />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => setCameraVisible(true)}>
-                                <Ionicons name="videocam-outline" size={20} color="#6B7280" style={{ marginRight: 8 }} />
+                            {/* Message Input or Recording Visualizer */}
+                            {recording ? (
+                                <View style={[styles.messageInputContainer, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF2F2' }]}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                        {[1, 2, 3, 4, 5, 6, 7].map((bar, idx) => (
+                                            <View
+                                                key={idx}
+                                                style={{
+                                                    width: 4,
+                                                    height: 8 + (Math.random() * 16), // Simple fake visualizer
+                                                    backgroundColor: '#DC2626',
+                                                    borderRadius: 2
+                                                }}
+                                            />
+                                        ))}
+                                    </View>
+                                    <Text style={{ marginLeft: 12, color: '#DC2626', fontWeight: '600', fontSize: 12 }}>
+                                        Recording... {recordingDuration}s / 30s
+                                    </Text>
+                                </View>
+                            ) : (
+                                <View style={styles.messageInputContainer}>
+                                    <TextInput
+                                        style={styles.messageInput}
+                                        placeholder="Message..."
+                                        value={messageText}
+                                        onChangeText={setMessageText}
+                                        multiline
+                                    />
+                                    <TouchableOpacity onPress={pickImage}>
+                                        <Ionicons name="image-outline" size={20} color="#6B7280" style={{ marginRight: 8 }} />
+                                    </TouchableOpacity>
+
+                                </View>
+                            )}
+
+                            {/* Mic / Send Button */}
+                            <TouchableOpacity
+                                style={[styles.micButton, recording && { backgroundColor: '#FEE2E2' }]}
+                                onPress={() => {
+                                    if (messageText.trim() || mediaUri) {
+                                        handleSendMessage();
+                                    } else if (recording) {
+                                        stopRecording();
+                                    } else {
+                                        startRecording();
+                                    }
+                                }}
+                                onLongPress={!messageText.trim() && !mediaUri ? startRecording : undefined}
+                                disabled={loading || (!!mediaUri && !mediaType)}
+                            >
+                                {loading && (messageText || mediaUri) ? ( // visual feedback if sending
+                                    <ActivityIndicator size="small" color="#8B0000" />
+                                ) : (
+                                    <Ionicons
+                                        name={messageText.trim() || mediaUri ? "send" : (recording ? "stop" : "mic")}
+                                        size={20}
+                                        color={recording ? "#EF4444" : "#6B7280"}
+                                    />
+                                )}
                             </TouchableOpacity>
                         </View>
+                    </KeyboardAvoidingView>
 
-                        {/* Mic / Send Button */}
-                        <TouchableOpacity
-                            style={[styles.micButton, recording && { backgroundColor: '#FEE2E2' }]}
-                            onPress={messageText.trim() || mediaUri ? handleSendMessage : (recording ? stopRecording : startRecording)}
-                            onLongPress={!messageText.trim() && !mediaUri ? startRecording : undefined}
-                        >
-                            <Ionicons
-                                name={messageText.trim() || mediaUri ? "send" : (recording ? "stop" : "mic")}
-                                size={20}
-                                color={recording ? "#EF4444" : "#6B7280"}
-                            />
-                        </TouchableOpacity>
-                    </View>
 
-                    {/* Camera Modal */}
-                    <Modal visible={cameraVisible} animationType="slide">
-                        <CameraView style={{ flex: 1 }} ref={ref => setCameraRef(ref)} mode="video">
-                            <SafeAreaView style={{ flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-end', padding: 20 }}>
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <TouchableOpacity onPress={() => setCameraVisible(false)} style={{ padding: 20 }}>
-                                        <Text style={{ color: '#FFF', fontSize: 18 }}>Close</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        onPress={handleVideoRecord}
-                                        style={{
-                                            width: 70, height: 70, borderRadius: 35,
-                                            backgroundColor: isRecordingVideo ? '#EF4444' : '#FFF',
-                                            borderWidth: 4, borderColor: '#D1D5DB'
-                                        }}
-                                    />
-                                    <View style={{ width: 60 }} />
-                                </View>
-                            </SafeAreaView>
-                        </CameraView>
-                    </Modal>
                 </>
             ) : (
                 <View style={{ padding: 20, backgroundColor: '#FEF2F2', borderTopWidth: 1, borderTopColor: '#FECACA', alignItems: 'center' }}>
@@ -770,6 +1141,119 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                     </View>
                 </View>
             </Modal>
+
+            {/* Image Upload Description Modal */}
+            <Modal
+                transparent={true}
+                visible={imageUploadModalVisible}
+                onRequestClose={() => setImageUploadModalVisible(false)}
+                animationType="slide"
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Image Description</Text>
+
+                        {mediaUri && (
+                            <View style={{ width: '100%', height: 200, borderRadius: 8, marginBottom: 16, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+                                {(mediaType === 'image' || (!mediaType && !recording)) && (
+                                    <Image
+                                        source={{ uri: mediaUri }}
+                                        style={{ width: '100%', height: '100%' }}
+                                        resizeMode="cover"
+                                    />
+                                )}
+
+                                {mediaType === 'audio' && (
+                                    <View style={{ alignItems: 'center', gap: 12 }}>
+                                        <Ionicons name="mic-circle" size={64} color="#8B0000" />
+                                        <Text style={{ color: '#4B5563', fontWeight: '500' }}>Voice Note Recorded</Text>
+                                        <TouchableOpacity
+                                            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isPlayingPreview ? '#DCFCE7' : '#E5E7EB', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 }}
+                                            onPress={playPreview}
+                                        >
+                                            <Ionicons name={isPlayingPreview ? "pause" : "play"} size={16} color={isPlayingPreview ? "#047857" : "#374151"} />
+                                            <Text style={{ fontSize: 12, color: isPlayingPreview ? "#047857" : '#374151' }}>
+                                                {isPlayingPreview ? 'Playing...' : 'Play Preview'}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                            </View>
+                        )}
+
+                        <Text style={styles.modalLabel}>Add a caption (optional)</Text>
+                        <TextInput
+                            style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
+                            placeholder="Describe this image..."
+                            multiline
+                            value={imageDescription}
+                            onChangeText={setImageDescription}
+                        />
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={styles.modalCancelBtn}
+                                onPress={() => {
+                                    setImageUploadModalVisible(false);
+                                    setMediaUri(null); // Cancel selection
+                                    setMediaType(null);
+                                }}
+                            >
+                                <Text style={styles.modalCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.modalSaveBtn}
+                                onPress={handleSendImageWithDescription}
+                            >
+                                <Text style={styles.modalSaveText}>Send</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            {/* Change Request Modal */}
+            <Modal
+                visible={changeRequestModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setChangeRequestModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Request Changes</Text>
+                        <Text style={styles.modalSubtitle}>Please provide a reason for requesting changes:</Text>
+
+                        <TextInput
+                            style={styles.changeRequestInput}
+                            placeholder="Enter reason for changes..."
+                            value={changeRequestReason}
+                            onChangeText={setChangeRequestReason}
+                            multiline
+                            numberOfLines={4}
+                            textAlignVertical="top"
+                        />
+
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.cancelButton]}
+                                onPress={() => {
+                                    setChangeRequestModalVisible(false);
+                                    setChangeRequestReason('');
+                                }}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.submitButton]}
+                                onPress={submitChangeRequest}
+                            >
+                                <Text style={styles.submitButtonText}>Submit</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
         </SafeAreaView>
     );
 };
@@ -1144,6 +1628,50 @@ const styles = StyleSheet.create({
     disabledBtn: {
         opacity: 0.7,
         backgroundColor: '#9CA3AF'
+    },
+    changeRequestInput: {
+        borderWidth: 1,
+        borderColor: '#D1D5DB',
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 14,
+        color: '#111827',
+        minHeight: 100,
+        marginVertical: 16
+    },
+    modalButtons: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 8
+    },
+    modalButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 8,
+        alignItems: 'center'
+    },
+    cancelButton: {
+        backgroundColor: '#F3F4F6',
+        borderWidth: 1,
+        borderColor: '#D1D5DB'
+    },
+    submitButton: {
+        backgroundColor: '#EF4444'
+    },
+    cancelButtonText: {
+        color: '#374151',
+        fontWeight: '600',
+        fontSize: 14
+    },
+    submitButtonText: {
+        color: '#FFF',
+        fontWeight: '600',
+        fontSize: 14
+    },
+    modalSubtitle: {
+        fontSize: 14,
+        color: '#6B7280',
+        marginTop: 8
     }
 });
 

@@ -3,14 +3,18 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, 
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 
+import { useFocusEffect } from '@react-navigation/native';
+
 const EmployeeTasksScreen = ({ navigation }: any) => {
     const [phases, setPhases] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        fetchPhases();
-    }, []);
+    useFocusEffect(
+        React.useCallback(() => {
+            fetchPhases();
+        }, [])
+    );
 
     const fetchPhases = async () => {
         try {

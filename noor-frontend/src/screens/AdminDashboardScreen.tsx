@@ -157,6 +157,10 @@ const AdminDashboardScreen = () => {
     const [unreadCount, setUnreadCount] = useState(0);
     const [notificationDropdownVisible, setNotificationDropdownVisible] = useState(false);
 
+    // Stage Options Menu State
+    const [stageOptionsVisible, setStageOptionsVisible] = useState(false);
+    const [selectedStageOption, setSelectedStageOption] = useState<{ id: number, name: string } | null>(null);
+
     const fetchNotifications = async () => {
         try {
             const response = await api.get('/notifications');
@@ -842,32 +846,40 @@ const AdminDashboardScreen = () => {
 
 
     const confirmDeleteTask = async (taskId: number) => {
-        Alert.alert(
-            'Delete Task',
-            'Are you sure you want to delete this task? This action cannot be undone.',
-            [
-                {
-                    text: 'Cancel',
-                    style: 'cancel'
-                },
-                {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            await api.delete(`/tasks/${taskId}`);
-                            showToast('Task deleted successfully', 'success');
-                            if (selectedSite?.id) {
-                                fetchProjectDetails(selectedSite.id);
-                            }
-                        } catch (error) {
-                            console.error('Error deleting task:', error);
-                            Alert.alert('Error', 'Failed to delete task');
-                        }
-                    }
+        const handleDelete = async () => {
+            try {
+                await api.delete(`/tasks/${taskId}`);
+                showToast('Task deleted successfully', 'success');
+                if (selectedSite?.id) {
+                    fetchProjectDetails(selectedSite.id);
                 }
-            ]
-        );
+            } catch (error) {
+                console.error('Error deleting task:', error);
+                Alert.alert('Error', 'Failed to delete task');
+            }
+        };
+
+        if (Platform.OS === 'web') {
+            if (window.confirm('Are you sure you want to delete this task? This action cannot be undone.')) {
+                handleDelete();
+            }
+        } else {
+            Alert.alert(
+                'Delete Task',
+                'Are you sure you want to delete this task? This action cannot be undone.',
+                [
+                    {
+                        text: 'Cancel',
+                        style: 'cancel'
+                    },
+                    {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: handleDelete
+                    }
+                ]
+            );
+        }
     };
 
     const renderEmployeeItem = ({ item }: { item: any }) => (
@@ -1435,9 +1447,8 @@ const AdminDashboardScreen = () => {
                                                         <TouchableOpacity
                                                             style={styles.iconButton}
                                                             onPress={() => {
-                                                                setEditingPhaseId(phase.id);
-                                                                setEditingPhaseName(phase.name);
-                                                                setEditPhaseModalVisible(true);
+                                                                setSelectedStageOption({ id: phase.id, name: phase.name });
+                                                                setStageOptionsVisible(true);
                                                             }}
                                                         >
                                                             <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
@@ -2531,6 +2542,88 @@ const AdminDashboardScreen = () => {
                         </TouchableOpacity>
                     </ScrollView>
                 </SafeAreaView>
+            </Modal>
+
+            {/* Stage Options Menu Modal */}
+            <Modal
+                visible={stageOptionsVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setStageOptionsVisible(false)}
+            >
+                <TouchableOpacity
+                    style={styles.menuOverlay}
+                    activeOpacity={1}
+                    onPress={() => setStageOptionsVisible(false)}
+                >
+                    <View style={styles.menuContainer}>
+                        {/* Add Task Option */}
+                        <TouchableOpacity
+                            style={styles.menuItem}
+                            onPress={() => {
+                                if (selectedStageOption) {
+                                    setStageOptionsVisible(false);
+                                    setActivePhaseId(selectedStageOption.id);
+                                    setNewTaskName('');
+                                    setAddTaskModalVisible(true);
+                                }
+                            }}
+                        >
+                            <Ionicons name="add-circle-outline" size={20} color="#374151" />
+                            <Text style={styles.menuItemText}>Add Task</Text>
+                        </TouchableOpacity>
+
+                        {/* Edit Stage Option */}
+                        <TouchableOpacity
+                            style={styles.menuItem}
+                            onPress={() => {
+                                if (selectedStageOption) {
+                                    setStageOptionsVisible(false);
+                                    setEditingPhaseId(selectedStageOption.id);
+                                    setEditingPhaseName(selectedStageOption.name);
+                                    setEditPhaseModalVisible(true);
+                                }
+                            }}
+                        >
+                            <Ionicons name="pencil-outline" size={20} color="#374151" />
+                            <Text style={styles.menuItemText}>Edit Stage</Text>
+                        </TouchableOpacity>
+
+                        {/* Delete Stage Option */}
+                        <TouchableOpacity
+                            style={styles.menuItem}
+                            onPress={() => {
+                                if (selectedStageOption) {
+                                    setStageOptionsVisible(false);
+                                    const handleDeleteStage = async () => {
+                                        try {
+                                            await api.delete(`/phases/${selectedStageOption.id}`);
+                                            showToast('Stage deleted successfully', 'success');
+                                            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
+                                        } catch (error) {
+                                            console.error('Error deleting stage:', error);
+                                            Alert.alert('Error', 'Failed to delete stage');
+                                        }
+                                    };
+
+                                    if (Platform.OS === 'web') {
+                                        if (window.confirm(`Are you sure you want to delete stage "${selectedStageOption.name}"?`)) {
+                                            handleDeleteStage();
+                                        }
+                                    } else {
+                                        Alert.alert('Delete Stage', `Are you sure you want to delete stage "${selectedStageOption.name}"?`, [
+                                            { text: 'Cancel', style: 'cancel' },
+                                            { text: 'Delete', style: 'destructive', onPress: handleDeleteStage }
+                                        ]);
+                                    }
+                                }
+                            }}
+                        >
+                            <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                            <Text style={[styles.menuItemText, styles.menuItemDestructive]}>Delete Stage</Text>
+                        </TouchableOpacity>
+                    </View>
+                </TouchableOpacity>
             </Modal>
         </SafeAreaView >
     );
@@ -4117,11 +4210,44 @@ const styles = StyleSheet.create({
         borderColor: '#fecaca', // Light Red Border
     },
     employeeNameText: {
-        color: '#8B0000',
-        fontSize: 11,
+        fontSize: 10,
         fontWeight: '600',
-        marginLeft: 4,
+        color: '#374151',
     },
+    // Menu Modal Styles
+    menuOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    menuContainer: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 8,
+        width: 250,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 8,
+    },
+    menuItemText: {
+        marginLeft: 12,
+        fontSize: 14,
+        color: '#374151',
+        fontWeight: '500',
+    },
+    menuItemDestructive: {
+        color: '#EF4444',
+    },
+
 });
 
 export default AdminDashboardScreen;

@@ -63,6 +63,7 @@ const EmployeeDashboardScreen = () => {
                 api.get('/employee/dashboard-stats'),
                 api.get('/sites/assigned')
             ]);
+            console.log('[Frontend] Received stats:', statsRes.data);
             setStats(statsRes.data);
             setSites(sitesRes.data || []);
         } catch (error) {
@@ -205,12 +206,6 @@ const EmployeeDashboardScreen = () => {
                         icon="checkmark-done-circle-outline"
                         color="#388E3C"
                         count={stats.completed}
-                    />
-                    <StatusBox
-                        label="Active Sites"
-                        icon="business-outline"
-                        color="#1976D2"
-                        count={stats.sites}
                     />
                 </View>
 

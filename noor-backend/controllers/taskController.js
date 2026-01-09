@@ -130,6 +130,43 @@ exports.sendTaskMessage = async (req, res) => {
     }
 };
 
+// Complete Task (Employee submits for approval)
+exports.completeTask = async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        const employeeId = req.user.id;
+
+        // Update task status to waiting_for_approval and set progress to 100
+        await db.query(
+            'UPDATE tasks SET status = "waiting_for_approval", progress = 100, completed_by = ?, completed_at = NOW() WHERE id = ?',
+            [employeeId, taskId]
+        );
+
+        // Get task details for notification
+        const [taskData] = await db.query('SELECT site_id, phase_id, name FROM tasks WHERE id = ?', [taskId]);
+        if (taskData.length > 0) {
+            const task = taskData[0];
+
+            // Notify admin (user_id = 1)
+            await db.query(`
+                INSERT INTO notifications (project_id, phase_id, task_id, employee_id, type, message, is_read, created_at)
+                VALUES (?, ?, ?, 1, 'TASK_SUBMITTED', ?, 0, NOW())
+            `, [task.site_id, task.phase_id, taskId, `Task "${task.name}" submitted for approval`]);
+
+            // Add system message
+            await db.query(`
+                INSERT INTO task_messages (task_id, sender_id, type, content)
+                VALUES (?, ?, 'system', 'Work completed - Ready for admin approval')
+            `, [taskId, employeeId]);
+        }
+
+        res.json({ message: 'Task submitted for approval' });
+    } catch (error) {
+        console.error('Error completing task:', error);
+        res.status(500).json({ message: 'Error completing task' });
+    }
+};
+
 // Approve Task
 exports.approveTask = async (req, res) => {
     try {
@@ -163,7 +200,7 @@ exports.approveTask = async (req, res) => {
             // Add system message to chat
             await db.query(`
                 INSERT INTO task_messages (task_id, sender_id, type, content)
-                VALUES (?, ?, 'system', 'Task approved by Admin.')
+                VALUES (?, ?, 'system', '✅ Good work! Task approved and completed by admin.')
             `, [taskId, adminId]);
         }
 
@@ -308,8 +345,6 @@ exports.updateTask = async (req, res) => {
         const { id: taskId } = req.params;
         const { name, status, start_date, due_date, amount, assigned_to } = req.body;
 
-        console.log(`[updateTask] Updating Task ID: ${taskId}`, req.body);
-
         // Update basic task details
         await db.query(`
             UPDATE tasks 
@@ -323,8 +358,6 @@ exports.updateTask = async (req, res) => {
 
         // Handle Assignment if provided
         if (assigned_to !== undefined) {
-            console.log(`[updateTask] Handling Assignment for Employee ID: ${assigned_to}`);
-
             // First, remove existing assignments
             await db.query('DELETE FROM task_assignments WHERE task_id = ?', [taskId]);
 

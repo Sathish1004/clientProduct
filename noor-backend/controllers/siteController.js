@@ -842,7 +842,18 @@ exports.getEmployeeDashboardStats = async (req, res) => {
     try {
         const employeeId = req.user.id;
 
-        // 1. Pending/Average Progress - Fetch tasks assigned
+        // Count phases/stages assigned to this employee
+        const [phaseStats] = await db.query(`
+            SELECT 
+                COUNT(*) as total_phases,
+                SUM(CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END) as completed_phases,
+                SUM(CASE WHEN p.status != 'Completed' THEN 1 ELSE 0 END) as pending_phases
+            FROM phases p
+            JOIN site_assignments sa ON p.site_id = sa.site_id
+            WHERE sa.employee_id = ?
+        `, [employeeId]);
+
+        // Also count individual tasks assigned
         const [taskStats] = await db.query(`
             SELECT 
                 COUNT(*) as total_tasks,
@@ -853,17 +864,21 @@ exports.getEmployeeDashboardStats = async (req, res) => {
             WHERE ta.employee_id = ?
         `, [employeeId]);
 
-        // 2. Assigned Sites
-        const [siteStats] = await db.query(`
-            SELECT COUNT(DISTINCT site_id) as assigned_sites
-            FROM site_assignments
-            WHERE employee_id = ?
-        `, [employeeId]);
+        // Combine phase and task counts (convert to numbers to avoid string concatenation)
+        const totalPending = Number(phaseStats[0].pending_phases || 0) + Number(taskStats[0].pending_tasks || 0);
+        const totalCompleted = Number(phaseStats[0].completed_phases || 0) + Number(taskStats[0].completed_tasks || 0);
+
+        console.log('[Dashboard Stats]', {
+            employeeId,
+            phaseStats: phaseStats[0],
+            taskStats: taskStats[0],
+            totalPending,
+            totalCompleted
+        });
 
         res.json({
-            pending: taskStats[0].pending_tasks || 0,
-            completed: taskStats[0].completed_tasks || 0,
-            sites: siteStats[0].assigned_sites || 0
+            pending: totalPending,
+            completed: totalCompleted
         });
 
     } catch (error) {
@@ -898,14 +913,24 @@ exports.getEmployeePhases = async (req, res) => {
     try {
         const employeeId = req.user.id;
         const [phases] = await db.query(`
-            SELECT DISTINCT p.*, s.name as site_name, s.location as site_location, s.created_at as site_created_at
+            SELECT p.*, s.name as site_name, s.location as site_location, s.created_at as site_created_at,
+            MIN(t.start_date) as min_task_start, 
+            MAX(t.due_date) as max_task_due
             FROM phases p
             JOIN tasks t ON p.id = t.phase_id
             JOIN task_assignments ta ON t.id = ta.task_id
             LEFT JOIN sites s ON p.site_id = s.id
             WHERE ta.employee_id = ?
+            GROUP BY p.id
             ORDER BY s.created_at DESC, p.order_num ASC
         `, [employeeId]);
+
+        // Post-processing to fill missing dates
+        phases.forEach(phase => {
+            if (!phase.start_date && phase.min_task_start) phase.start_date = phase.min_task_start;
+            if (!phase.due_date && phase.max_task_due) phase.due_date = phase.max_task_due;
+        });
+
         res.json({ phases });
     } catch (error) {
         console.error('Error fetching employee phases:', error);
@@ -921,7 +946,7 @@ exports.getTaskDetails = async (req, res) => {
 
         // 1. Task Basic Info
         const [tasks] = await db.query(`
-            SELECT t.*, s.name as site_name, p.name as phase_name, e.name as assigned_employee_name
+            SELECT t.*, s.name as site_name, p.name as phase_name, p.progress as phase_progress, e.name as assigned_employee_name
             FROM tasks t
             LEFT JOIN sites s ON t.site_id = s.id
             LEFT JOIN phases p ON t.phase_id = p.id
@@ -951,7 +976,8 @@ exports.getTaskDetails = async (req, res) => {
 
         // 3. Task Messages (Chat) - optional, might be fetched separately
         const [messages] = await db.query(`
-            SELECT tm.*, e.name as sender_name
+            SELECT tm.*, 
+            COALESCE(e.name, CASE WHEN tm.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_name
             FROM task_messages tm
             LEFT JOIN employees e ON tm.sender_id = e.id
             WHERE tm.task_id = ?
@@ -963,7 +989,20 @@ exports.getTaskDetails = async (req, res) => {
             SELECT * FROM todos WHERE task_id = ? ORDER BY created_at ASC
         `, [taskId]);
 
-        res.json({ task, updates, messages, todos });
+        // 5. Phase Updates (so we see percentage progress in Task View too)
+        let phaseUpdates = [];
+        if (task.phase_id) {
+            const [pUpdates] = await db.query(`
+                SELECT su.*, e.name as employee_name
+                FROM stage_updates su
+                LEFT JOIN employees e ON su.employee_id = e.id
+                WHERE su.phase_id = ?
+                ORDER BY su.created_at DESC
+            `, [task.phase_id]);
+            phaseUpdates = pUpdates;
+        }
+
+        res.json({ task, updates, messages, todos, phase_updates: phaseUpdates });
 
     } catch (error) {
         console.error('Error fetching task details:', error);
@@ -1004,7 +1043,9 @@ exports.getPhaseDetails = async (req, res) => {
 
         // Messages
         const [messages] = await db.query(`
-            SELECT m.*, e.name as sender_name, e.role as sender_role
+            SELECT m.*, 
+            COALESCE(e.name, CASE WHEN m.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_name,
+            COALESCE(e.role, CASE WHEN m.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_role
             FROM stage_messages m
             LEFT JOIN employees e ON m.sender_id = e.id
             WHERE m.phase_id = ?
@@ -1094,8 +1135,12 @@ exports.addPhaseUpdate = async (req, res) => {
 
         // Update phase logic
         let status = 'in_progress';
-        if (Number(progress) === 100) status = 'waiting_for_approval';
-        if (Number(progress) === 0) status = 'pending'; // 'pending' maps to Not Started
+        // Check if this is a submission for approval (either 100% or explicit submission message)
+        if (Number(progress) === 100 || (message && message.toLowerCase().includes('submitted for approval'))) {
+            status = 'waiting_for_approval';
+        } else if (Number(progress) === 0) {
+            status = 'Not Started';
+        }
 
         await db.query('UPDATE phases SET progress = ?, status = ? WHERE id = ?', [progress, status, id]);
 
@@ -1117,20 +1162,49 @@ exports.approvePhase = async (req, res) => {
         }
 
         await db.query(
-            'UPDATE phases SET status = "achieved", approved_by = ?, approved_at = NOW() WHERE id = ?',
+            'UPDATE phases SET status = "Completed", approved_by = ?, approved_at = NOW() WHERE id = ?',
             [req.user.id, id]
         );
 
         // Add system message
         await db.query(`
             INSERT INTO stage_messages (phase_id, sender_id, type, content)
-            VALUES (?, ?, 'system', 'Work approved by admin.')
+            VALUES (?, ?, 'system', '✅ Good work! Phase approved and completed by admin.')
         `, [id, req.user.id]);
 
         res.json({ message: 'Phase approved and completed' });
     } catch (error) {
         console.error('Error approving phase:', error);
         res.status(500).json({ message: 'Error approving phase' });
+    }
+};
+
+// Reject Phase (Admin - Request Changes)
+exports.rejectPhase = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+        const isAdmin = req.user.role === 'Admin' || req.user.role === 'admin';
+
+        if (!isAdmin) {
+            return res.status(403).json({ message: 'Only admin can reject phases' });
+        }
+
+        await db.query(
+            'UPDATE phases SET status = "in_progress", progress = 0 WHERE id = ?',
+            [id]
+        );
+
+        // Add system message
+        await db.query(`
+            INSERT INTO stage_messages (phase_id, sender_id, type, content)
+            VALUES (?, ?, 'system', ?)
+        `, [id, req.user.id, `Admin requested changes: ${reason || 'Please review and resubmit'}`]);
+
+        res.json({ message: 'Phase sent back for revisions' });
+    } catch (error) {
+        console.error('Error rejecting phase:', error);
+        res.status(500).json({ message: 'Error rejecting phase' });
     }
 };
 
@@ -1279,10 +1353,9 @@ exports.getPhaseDetails = async (req, res) => {
         // Let's use a subquery for name.
         const [messages] = await db.query(`
             SELECT sm.*,
-            COALESCE(u.name, e.name, 'User') as sender_name,
-            COALESCE(u.role, e.role, 'User') as sender_role
+            COALESCE(e.name, CASE WHEN sm.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_name,
+            COALESCE(e.role, CASE WHEN sm.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_role
             FROM stage_messages sm
-            LEFT JOIN users u ON sm.sender_id = u.id
             LEFT JOIN employees e ON sm.sender_id = e.id
             WHERE sm.phase_id = ?
             ORDER BY sm.created_at ASC
@@ -1314,17 +1387,24 @@ exports.addPhaseUpdate = async (req, res) => {
         const { id } = req.params;
         const { message, progress, previous_progress } = req.body;
         const employeeId = req.user.id;
-        // Get employee name
-        const [emps] = await db.query("SELECT name FROM employees WHERE id = ?", [employeeId]);
-        const employeeName = emps.length > 0 ? emps[0].name : 'Admin'; // Fallback
 
         await db.query(
-            "INSERT INTO stage_updates (phase_id, employee_id, employee_name, message, previous_progress, new_progress) VALUES (?, ?, ?, ?, ?, ?)",
-            [id, employeeId, employeeName, message || 'Progress Update', previous_progress || 0, progress]
+            "INSERT INTO stage_updates (phase_id, employee_id, message, previous_progress, new_progress) VALUES (?, ?, ?, ?, ?)",
+            [id, employeeId, message || 'Progress Update', previous_progress || 0, progress]
         );
 
-        // Update Phase Progress
-        await db.query("UPDATE phases SET progress = ? WHERE id = ?", [progress, id]);
+        // Update Phase Progress and Status
+        let status = 'in_progress';
+        // Check if this is a submission for approval
+        if (message && message.toLowerCase().includes('submitted for approval')) {
+            status = 'waiting_for_approval';
+        } else if (Number(progress) === 100) {
+            status = 'waiting_for_approval';
+        } else if (Number(progress) === 0) {
+            status = 'Not Started';
+        }
+
+        await db.query("UPDATE phases SET progress = ?, status = ? WHERE id = ?", [progress, status, id]);
 
         // NOTIFICATION: Task/Stage Update
         if (req.user.role !== 'Admin' && req.user.role !== 'admin') {

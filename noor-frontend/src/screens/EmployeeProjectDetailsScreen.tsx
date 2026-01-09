@@ -4,15 +4,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import api from '../services/api';
 
+import { useFocusEffect } from '@react-navigation/native';
+
 const EmployeeProjectDetailsScreen = ({ route, navigation }: any) => {
     const { siteId, siteName } = route.params;
     const { user } = useContext(AuthContext);
     const [phases, setPhases] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        fetchPhases();
-    }, [siteId]);
+    useFocusEffect(
+        React.useCallback(() => {
+            fetchPhases();
+        }, [siteId])
+    );
 
     const fetchPhases = async () => {
         try {

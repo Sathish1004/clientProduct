@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, StyleSheet, Image, KeyboardAvoidingView, Platform, Alert, FlatList, SafeAreaView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, StyleSheet, Image, KeyboardAvoidingView, Platform, Alert, FlatList, SafeAreaView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import api from '../services/api';
 import { AuthContext } from '../context/AuthContext';
 
@@ -19,7 +20,12 @@ const EmployeeTaskDetailScreen = ({ route, navigation }: any) => {
     const [progressNote, setProgressNote] = useState('');
     const [progressValue, setProgressValue] = useState('');
     const [todoContent, setTodoContent] = useState('');
+
     const [showUpdateForm, setShowUpdateForm] = useState(false);
+
+    // Image Upload State
+    const [selectedImage, setSelectedImage] = useState<string | null>(null);
+    const [uploading, setUploading] = useState(false);
 
     const flatListRef = useRef<FlatList>(null);
 
@@ -48,20 +54,78 @@ const EmployeeTaskDetailScreen = ({ route, navigation }: any) => {
         }
     };
 
-    const handleSendMessage = async () => {
-        if (!messageText.trim()) return;
+    const pickImage = async () => {
+        try {
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images, // Restricted to images for now as per req
+                allowsEditing: true,
+                quality: 0.8,
+            });
+
+            if (!result.canceled) {
+                setSelectedImage(result.assets[0].uri);
+            }
+        } catch (error) {
+            console.error('Error picking image:', error);
+            Alert.alert('Error', 'Failed to pick image');
+        }
+    };
+
+    const uploadImage = async (uri: string) => {
+        const formData = new FormData();
+        const filename = uri.split('/').pop();
+        const match = /\.(\w+)$/.exec(filename || '');
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+        if (Platform.OS === 'web') {
+            // For web, we need to convert the URI to a blob/file
+            const response = await fetch(uri);
+            const blob = await response.blob();
+            const file = new File([blob], filename || 'upload.jpg', { type });
+            formData.append('file', file);
+        } else {
+            formData.append('file', { uri, name: filename || 'upload.jpg', type } as any);
+        }
 
         try {
+            const response = await api.post('/upload', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                transformRequest: (data, headers) => {
+                    return data; // Prevent Axios from stringifying FormData
+                }
+            });
+            return response.data.url;
+        } catch (error) {
+            console.error('Image upload failed:', error);
+            throw error;
+        }
+    };
+
+    const handleSendMessage = async () => {
+        if (!messageText.trim() && !selectedImage) return;
+
+        try {
+            setUploading(true);
+            let mediaUrl = null;
+
+            if (selectedImage) {
+                mediaUrl = await uploadImage(selectedImage);
+            }
+
             await api.post(`/tasks/${taskId}/messages`, {
                 content: messageText,
-                type: 'text'
+                type: mediaUrl ? 'image' : 'text',
+                mediaUrl: mediaUrl
             });
             setMessageText('');
+            setSelectedImage(null);
             // Optimistic update or refetch
-            fetchTaskDetails(); // For now refetch to get server timestamp
+            fetchTaskDetails();
         } catch (error) {
             console.error('Error sending message:', error);
             Alert.alert('Error', 'Failed to send message');
+        } finally {
+            setUploading(false);
         }
     };
 
@@ -307,8 +371,17 @@ const EmployeeTaskDetailScreen = ({ route, navigation }: any) => {
                                 const isMe = user ? item.sender_id === user.id : false;
                                 return (
                                     <View style={[styles.messageBubble, isMe ? styles.myMessage : styles.otherMessage]}>
-                                        <Text style={styles.messageUser}>{isMe ? 'Me' : item.sender_name}</Text>
-                                        <Text style={styles.messageText}>{item.content}</Text>
+                                        {!isMe && <Text style={styles.messageUser}>{item.sender_name}</Text>}
+
+                                        {item.media_url && (
+                                            <Image
+                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                                style={styles.messageImage}
+                                                resizeMode="cover"
+                                            />
+                                        )}
+
+                                        {item.content ? <Text style={styles.messageText}>{item.content}</Text> : null}
                                         <Text style={styles.messageTime}>{new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
                                     </View>
                                 );
@@ -317,18 +390,31 @@ const EmployeeTaskDetailScreen = ({ route, navigation }: any) => {
                         />
                         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={100}>
                             <View style={styles.chatInputContainer}>
-                                <TouchableOpacity style={styles.attachBtn}>
-                                    <Ionicons name="add" size={24} color="#666" />
-                                </TouchableOpacity>
-                                <TextInput
-                                    style={styles.chatInput}
-                                    placeholder="Type a message..."
-                                    value={messageText}
-                                    onChangeText={setMessageText}
-                                />
-                                <TouchableOpacity style={styles.sendBtn} onPress={handleSendMessage}>
-                                    <Ionicons name="send" size={20} color="#FFF" />
-                                </TouchableOpacity>
+                                <View style={styles.inputWrapper}>
+                                    {selectedImage && (
+                                        <View style={styles.imagePreviewContainer}>
+                                            <Image source={{ uri: selectedImage }} style={styles.imagePreview} />
+                                            <TouchableOpacity style={styles.removeImageBtn} onPress={() => setSelectedImage(null)}>
+                                                <Ionicons name="close-circle" size={24} color="#EF4444" />
+                                            </TouchableOpacity>
+                                        </View>
+                                    )}
+                                    <View style={styles.chatInputRow}>
+                                        <TouchableOpacity style={styles.attachBtn} onPress={pickImage} disabled={uploading}>
+                                            <Ionicons name="image" size={24} color="#666" />
+                                        </TouchableOpacity>
+                                        <TextInput
+                                            style={styles.chatInput}
+                                            placeholder="Type a message..."
+                                            value={messageText}
+                                            onChangeText={setMessageText}
+                                            editable={!uploading}
+                                        />
+                                        <TouchableOpacity style={styles.sendBtn} onPress={handleSendMessage} disabled={uploading}>
+                                            {uploading ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name="send" size={20} color="#FFF" />}
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
                             </View>
                         </KeyboardAvoidingView>
                     </View>
@@ -393,7 +479,14 @@ const styles = StyleSheet.create({
     messageUser: { fontSize: 10, color: '#6B7280', marginBottom: 2 },
     messageText: { fontSize: 14, color: '#1F2937' },
     messageTime: { fontSize: 10, color: '#9CA3AF', alignSelf: 'flex-end', marginTop: 4 },
-    chatInputContainer: { flexDirection: 'row', padding: 12, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE', alignItems: 'center' },
+
+    messageImage: { width: 200, height: 150, borderRadius: 8, marginBottom: 4 },
+    chatInputContainer: { padding: 12, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE' },
+    inputWrapper: { flexDirection: 'column' },
+    chatInputRow: { flexDirection: 'row', alignItems: 'center' },
+    imagePreviewContainer: { flexDirection: 'row', marginBottom: 8, alignItems: 'center' },
+    imagePreview: { width: 60, height: 60, borderRadius: 8, marginRight: 8 },
+    removeImageBtn: { padding: 4 },
     attachBtn: { padding: 8 },
     chatInput: { flex: 1, backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, marginHorizontal: 8, maxHeight: 80 },
     sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#8B0000', alignItems: 'center', justifyContent: 'center' },

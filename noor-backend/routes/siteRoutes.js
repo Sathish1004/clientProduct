@@ -49,6 +49,7 @@ router.post('/tasks/:taskId/updates', verifyToken, taskController.addTaskUpdate)
 router.post('/tasks/:taskId/todos', verifyToken, taskController.addTodo);
 router.put('/todos/:todoId/toggle', verifyToken, taskController.toggleTodo);
 router.post('/tasks/:taskId/messages', verifyToken, taskController.sendTaskMessage);
+router.put('/tasks/:taskId/complete', verifyToken, taskController.completeTask);
 router.put('/tasks/:taskId/approve', verifyToken, taskController.approveTask);
 router.put('/tasks/:taskId/reject', verifyToken, taskController.rejectTask);
 router.put('/tasks/:taskId/assign', verifyToken, taskController.toggleTaskAssignment);
@@ -59,6 +60,7 @@ router.post('/phases/:id/todos', verifyToken, siteController.addPhaseTodo);
 router.put('/phases/todos/:todoId/toggle', verifyToken, siteController.togglePhaseTodo);
 router.post('/phases/:id/updates', verifyToken, siteController.addPhaseUpdate);
 router.put('/phases/:id/approve', verifyToken, siteController.approvePhase);
+router.put('/phases/:id/reject', verifyToken, siteController.rejectPhase);
 router.post('/phases/:id/messages', verifyToken, siteController.sendPhaseMessage);
 
 // Notifications

@@ -296,20 +296,29 @@ exports.deletePhase = async (req, res) => {
 exports.getAssignedSites = async (req, res) => {
     try {
         const employeeId = req.user.id;
+        console.log('[getAssignedSites] Fetching for employee:', employeeId);
 
         const [sites] = await db.query(`
-            SELECT s.*, 
+            SELECT DISTINCT s.*, 
                    (
-                       SELECT COUNT(DISTINCT t.id) 
-                       FROM tasks t 
-                       JOIN task_assignments ta ON t.id = ta.task_id 
-                       WHERE t.site_id = s.id AND ta.employee_id = ?
+                       SELECT COUNT(DISTINCT t_in.id)
+                       FROM tasks t_in
+                       JOIN phases p_in ON t_in.phase_id = p_in.id
+                       LEFT JOIN task_assignments ta_in ON t_in.id = ta_in.task_id
+                       WHERE p_in.site_id = s.id AND (ta_in.employee_id = ? OR t_in.assigned_to = ?)
                    ) as my_tasks
             FROM sites s
-            INNER JOIN site_assignments sa ON s.id = sa.site_id
-            WHERE sa.employee_id = ?
+            LEFT JOIN site_assignments sa ON s.id = sa.site_id
+            LEFT JOIN phases p ON s.id = p.site_id
+            LEFT JOIN tasks t ON p.id = t.phase_id
+            LEFT JOIN task_assignments ta ON t.id = ta.task_id
+            WHERE 
+                sa.employee_id = ?
+                OR p.assigned_to = ?
+                OR t.assigned_to = ?
+                OR ta.employee_id = ?
             ORDER BY s.created_at DESC
-        `, [employeeId, employeeId]);
+        `, [employeeId, employeeId, employeeId, employeeId, employeeId, employeeId]);
 
         res.json({ sites });
     } catch (error) {
@@ -572,7 +581,7 @@ exports.updateTaskStatus = async (req, res) => {
 exports.getEmployees = async (req, res) => {
     try {
         const [employees] = await db.query(
-            "SELECT id, name, email, phone, role, status, created_at FROM employees ORDER BY created_at DESC"
+            "SELECT id, name, email, phone, role, status, created_at, profile_image FROM employees ORDER BY created_at DESC"
         );
         res.json({ employees });
     } catch (error) {
@@ -585,16 +594,24 @@ exports.getEmployees = async (req, res) => {
 // Create Employee
 exports.createEmployee = async (req, res) => {
     try {
+        console.log('[createEmployee] Body:', req.body);
         const { name, email, password, phone, role, status } = req.body;
 
         // Validation - Phone is mandatory, Email is optional
         if (!name || !phone || !password || !role) {
-            return res.status(400).json({ message: 'Name, Phone, Role, and Password are required' });
+            console.log('[createEmployee] Missing fields:', { name, phone, hasPassword: !!password, role });
+            const missing = [];
+            if (!name) missing.push('Name');
+            if (!phone) missing.push('Phone');
+            if (!password) missing.push('Password');
+            if (!role) missing.push('Role');
+            return res.status(400).json({ message: `Required fields missing: ${missing.join(', ')}` });
         }
 
         // Check duplicate phone
         const [phoneCheck] = await db.query('SELECT id FROM employees WHERE phone = ?', [phone]);
         if (phoneCheck.length > 0) {
+            console.log('[createEmployee] Duplicate phone:', phone);
             return res.status(400).json({ message: 'Employee with this phone already exists' });
         }
 
@@ -612,7 +629,7 @@ exports.createEmployee = async (req, res) => {
         // Insert
         await db.query(
             'INSERT INTO employees (name, email, phone, password, role, status) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, email || null, phone, hashedPassword, role, status || 'Active']
+            [name, email || null, phone, hashedPassword, role.toLowerCase(), status || 'Active']
         );
 
         res.status(201).json({ message: 'Employee created successfully' });
@@ -852,33 +869,42 @@ exports.getEmployeeDashboardStats = async (req, res) => {
     try {
         const employeeId = req.user.id;
 
-        // Count phases/stages assigned to this employee
+        // Count phases/stages assigned
+        // status can be 'Completed' OR 'waiting_for_approval' to count as completed for the employee
         const [phaseStats] = await db.query(`
             SELECT 
                 COUNT(*) as total_phases,
-                SUM(CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END) as completed_phases,
-                SUM(CASE WHEN p.status != 'Completed' THEN 1 ELSE 0 END) as pending_phases
-            FROM phases p
-            JOIN site_assignments sa ON p.site_id = sa.site_id
-            WHERE sa.employee_id = ?
+                COALESCE(SUM(CASE WHEN status IN ('Completed', 'waiting_for_approval') THEN 1 ELSE 0 END), 0) as completed_phases,
+                COALESCE(SUM(CASE WHEN status NOT IN ('Completed', 'waiting_for_approval') THEN 1 ELSE 0 END), 0) as pending_phases
+            FROM phases
+            WHERE assigned_to = ?
         `, [employeeId]);
 
-        // Also count individual tasks assigned
+        // Count tasks assigned
+        // status can be 'Completed' OR 'Completed – Waiting for Admin Approval' OR 'waiting_for_approval'
         const [taskStats] = await db.query(`
             SELECT 
                 COUNT(*) as total_tasks,
-                SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed_tasks,
-                SUM(CASE WHEN t.status != 'completed' THEN 1 ELSE 0 END) as pending_tasks
+                COALESCE(SUM(CASE 
+                    WHEN LOWER(t.status) = 'completed' 
+                    OR LOWER(t.status) LIKE '%waiting for admin approval%' 
+                    OR LOWER(t.status) = 'waiting_for_approval'
+                    THEN 1 ELSE 0 END), 0) as completed_tasks,
+                COALESCE(SUM(CASE 
+                    WHEN LOWER(t.status) != 'completed' 
+                    AND LOWER(t.status) NOT LIKE '%waiting for admin approval%' 
+                    AND LOWER(t.status) != 'waiting_for_approval'
+                    THEN 1 ELSE 0 END), 0) as pending_tasks
             FROM tasks t
-            JOIN task_assignments ta ON t.id = ta.task_id
-            WHERE ta.employee_id = ?
-        `, [employeeId]);
+            WHERE t.employee_id = ? 
+               OR t.id IN (SELECT task_id FROM task_assignments WHERE employee_id = ?)
+        `, [employeeId, employeeId]);
 
         // Combine phase and task counts (convert to numbers to avoid string concatenation)
         const totalPending = Number(phaseStats[0].pending_phases || 0) + Number(taskStats[0].pending_tasks || 0);
         const totalCompleted = Number(phaseStats[0].completed_phases || 0) + Number(taskStats[0].completed_tasks || 0);
 
-        console.log('[Dashboard Stats]', {
+        console.log('[Dashboard Stats] Updated:', {
             employeeId,
             phaseStats: phaseStats[0],
             taskStats: taskStats[0],
@@ -999,8 +1025,9 @@ exports.getTaskDetails = async (req, res) => {
             SELECT * FROM todos WHERE task_id = ? ORDER BY created_at ASC
         `, [taskId]);
 
-        // 5. Phase Updates (so we see percentage progress in Task View too)
+        // 5. Phase Updates
         let phaseUpdates = [];
+        let stageMessages = [];
         if (task.phase_id) {
             const [pUpdates] = await db.query(`
                 SELECT su.*, e.name as employee_name
@@ -1010,9 +1037,24 @@ exports.getTaskDetails = async (req, res) => {
                 ORDER BY su.created_at DESC
             `, [task.phase_id]);
             phaseUpdates = pUpdates;
+
+            // 6. Stage Messages (Context from parent phase)
+            const [pMessages] = await db.query(`
+                SELECT sm.*,
+                CASE 
+                    WHEN sm.sender_role IN ('admin', 'Admin') THEN 'Admin'
+                    ELSE COALESCE(e.name, 'User')
+                END as sender_name,
+                'stage_message' as source_type
+                FROM stage_messages sm
+                LEFT JOIN employees e ON sm.sender_id = e.id AND (sm.sender_role IS NULL OR sm.sender_role NOT IN ('admin', 'Admin'))
+                WHERE sm.phase_id = ?
+                ORDER BY sm.created_at ASC
+            `, [task.phase_id]);
+            stageMessages = pMessages;
         }
 
-        res.json({ task, updates, messages, todos, phase_updates: phaseUpdates });
+        res.json({ task, updates, messages, todos, phase_updates: phaseUpdates, stage_messages: stageMessages });
 
     } catch (error) {
         console.error('Error fetching task details:', error);
@@ -1224,11 +1266,12 @@ exports.sendPhaseMessage = async (req, res) => {
         const { id } = req.params;
         const senderId = req.user.id;
         const { type, content, mediaUrl } = req.body;
+        const senderRole = req.user.role; // 'admin', 'employee', etc.
 
         await db.query(`
-            INSERT INTO stage_messages (phase_id, sender_id, type, content, media_url)
-            VALUES (?, ?, ?, ?, ?)
-        `, [id, senderId, type || 'text', content, mediaUrl]);
+            INSERT INTO stage_messages (phase_id, sender_id, sender_role, type, content, media_url)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `, [id, senderId, senderRole, type || 'text', content, mediaUrl]);
 
         // NOTIFICATION: Chat Message
         // Only notify if sender is NOT admin (assuming Admin doesn't need to notify themselves, but requirement says "Employee... must notify Admin")
@@ -1363,10 +1406,13 @@ exports.getPhaseDetails = async (req, res) => {
         // Let's use a subquery for name.
         const [messages] = await db.query(`
             SELECT sm.*,
-            COALESCE(e.name, CASE WHEN sm.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_name,
-            COALESCE(e.role, CASE WHEN sm.sender_id = 1 THEN 'Admin' ELSE 'User' END) as sender_role
+            CASE 
+                WHEN sm.sender_role IN ('admin', 'Admin') THEN 'Admin'
+                ELSE COALESCE(e.name, 'User')
+            END as sender_name,
+            COALESCE(sm.sender_role, e.role, 'User') as resolved_role
             FROM stage_messages sm
-            LEFT JOIN employees e ON sm.sender_id = e.id
+            LEFT JOIN employees e ON sm.sender_id = e.id AND (sm.sender_role IS NULL OR sm.sender_role NOT IN ('admin', 'Admin'))
             WHERE sm.phase_id = ?
             ORDER BY sm.created_at ASC
         `, [id]);
@@ -1398,20 +1444,24 @@ exports.addPhaseUpdate = async (req, res) => {
         const { message, progress, previous_progress } = req.body;
         const employeeId = req.user.id;
 
-        await db.query(
-            "INSERT INTO stage_updates (phase_id, employee_id, message, previous_progress, new_progress) VALUES (?, ?, ?, ?, ?)",
-            [id, employeeId, message || 'Progress Update', previous_progress || 0, progress]
-        );
+        // Only add update record if it's not a completion (progress 100) or if there is a specific message
+        if (Number(progress) !== 100 || (message && message.trim() !== '')) {
+            await db.query(
+                "INSERT INTO stage_updates (phase_id, employee_id, message, previous_progress, new_progress) VALUES (?, ?, ?, ?, ?)",
+                [id, employeeId, message || 'Progress Update', previous_progress || 0, progress]
+            );
+        }
 
         // Update Phase Progress and Status
         let status = 'in_progress';
-        // Check if this is a submission for approval
-        if (message && message.toLowerCase().includes('submitted for approval')) {
-            status = 'waiting_for_approval';
-        } else if (Number(progress) === 100) {
+
+        // Check if this is a submission for approval or 100% completion
+        if (Number(progress) === 100) {
             status = 'waiting_for_approval';
         } else if (Number(progress) === 0) {
             status = 'Not Started';
+        } else if (message && message.toLowerCase().includes('submitted for approval')) {
+            status = 'waiting_for_approval';
         }
 
         await db.query("UPDATE phases SET progress = ?, status = ? WHERE id = ?", [progress, status, id]);
@@ -1465,5 +1515,74 @@ exports.togglePhaseTodo = async (req, res) => {
     } catch (error) {
         console.error('Error toggling todo:', error);
         res.status(500).json({ message: 'Error toggling todo' });
+    }
+};
+
+// Get Employee Profile
+exports.getEmployeeProfile = async (req, res) => {
+    try {
+        const employeeId = req.user.id;
+        // Select all columns to ensure we get profile_image if it exists
+        const [rows] = await db.query("SELECT id, name, email, phone, role, status, profile_image FROM employees WHERE id = ?", [employeeId]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Employee not found' });
+        }
+
+        res.json({ user: rows[0] });
+    } catch (error) {
+        // If profile_image column doesn't exist, retry without it
+        if (error.code === 'ER_BAD_FIELD_ERROR') {
+            const [rows] = await db.query("SELECT id, name, email, phone, role, status FROM employees WHERE id = ?", [req.user.id]);
+            return res.json({ user: rows[0] });
+        }
+        console.error('Error fetching profile:', error);
+        res.status(500).json({ message: 'Error fetching profile' });
+    }
+};
+
+// Update Employee Profile
+exports.updateEmployeeProfile = async (req, res) => {
+    try {
+        const employeeId = req.user.id;
+        const { name, email, phone, password, profile_image } = req.body;
+
+        // Build update query
+        let query = "UPDATE employees SET name = ?, email = ?, phone = ?";
+        let params = [name, email, phone];
+
+        if (password) {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            query += ", password = ?";
+            params.push(hashedPassword);
+        }
+
+        if (profile_image !== undefined) {
+            query += ", profile_image = ?";
+            params.push(profile_image);
+        }
+
+        query += " WHERE id = ?";
+        params.push(employeeId);
+
+        await db.query(query, params);
+
+        res.json({ message: 'Profile updated successfully' });
+    } catch (error) {
+        // Check if error is missing column 'profile_image'
+        if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage.includes("Unknown column 'profile_image'")) {
+            console.log("Adding missing column 'profile_image' to employees table...");
+            try {
+                await db.query("ALTER TABLE employees ADD COLUMN profile_image VARCHAR(255) DEFAULT NULL");
+                // Retry update (recursive call might fail due to headers sent, so just re-run logic)
+                await db.query(query, params); // Re-run query
+                return res.json({ message: 'Profile updated successfully (schema updated)' });
+            } catch (alterError) {
+                console.error("Failed to alter table:", alterError);
+            }
+        }
+
+        console.error('Error updating profile:', error);
+        res.status(500).json({ message: 'Error updating profile' });
     }
 };

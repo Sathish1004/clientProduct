@@ -153,11 +153,6 @@ exports.completeTask = async (req, res) => {
                 VALUES (?, ?, ?, 1, 'TASK_SUBMITTED', ?, 0, NOW())
             `, [task.site_id, task.phase_id, taskId, `Task "${task.name}" submitted for approval`]);
 
-            // Add system message
-            await db.query(`
-                INSERT INTO task_messages (task_id, sender_id, type, content)
-                VALUES (?, ?, 'system', 'Work completed - Ready for admin approval')
-            `, [taskId, employeeId]);
         }
 
         res.json({ message: 'Task submitted for approval' });
@@ -273,9 +268,9 @@ exports.toggleTaskAssignment = async (req, res) => {
             // Remove assignment
             await db.query('DELETE FROM task_assignments WHERE id = ?', [existing[0].id]);
         } else {
-            // Add assignment
+            // Add assignment with timestamp
             await db.query(
-                'INSERT INTO task_assignments (task_id, employee_id) VALUES (?, ?)',
+                'INSERT INTO task_assignments (task_id, employee_id, assigned_at) VALUES (?, ?, NOW())',
                 [taskId, employeeId]
             );
 

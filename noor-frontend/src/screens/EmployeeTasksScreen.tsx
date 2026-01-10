@@ -6,22 +6,22 @@ import api from '../services/api';
 import { useFocusEffect } from '@react-navigation/native';
 
 const EmployeeTasksScreen = ({ navigation }: any) => {
-    const [phases, setPhases] = useState<any[]>([]);
+    const [tasks, setTasks] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
     useFocusEffect(
         React.useCallback(() => {
-            fetchPhases();
+            fetchTasks();
         }, [])
     );
 
-    const fetchPhases = async () => {
+    const fetchTasks = async () => {
         try {
-            const response = await api.get('/employee/phases');
-            setPhases(response.data.phases);
+            const response = await api.get('/tasks/assigned');
+            setTasks(response.data.tasks || []);
         } catch (error) {
-            console.error('Error fetching phases:', error);
+            console.error('Error fetching tasks:', error);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -40,15 +40,20 @@ const EmployeeTasksScreen = ({ navigation }: any) => {
     const renderItem = ({ item }: any) => (
         <TouchableOpacity
             style={styles.taskCard}
-            onPress={() => navigation.navigate('StageProgress', { phaseId: item.id, siteName: item.site_name })}
+            onPress={() => navigation.navigate('StageProgress', { taskId: item.id, siteName: item.site_name })}
         >
             <View style={styles.cardHeader}>
                 <View style={styles.headerLeft}>
-                    {/* Site Name and Location */}
+                    {/* Site Name and Phase */}
                     <Text style={styles.siteName}>
                         <Ionicons name="business" size={14} color="#6B7280" /> {item.site_name}
                     </Text>
                     <Text style={styles.taskName}>{item.name}</Text>
+                    {item.phase_name && (
+                        <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>
+                            Phase: {item.phase_name}
+                        </Text>
+                    )}
                 </View>
 
                 {/* Status Badge */}
@@ -63,7 +68,7 @@ const EmployeeTasksScreen = ({ navigation }: any) => {
                 <View style={styles.dateInfo}>
                     <Ionicons name="calendar-outline" size={14} color="#6B7280" />
                     <Text style={styles.dateText}>
-                        {item.start_date ? new Date(item.start_date).toLocaleDateString() : 'TBD'} - {item.due_date ? new Date(item.due_date).toLocaleDateString() : 'TBD'}
+                        Due: {item.due_date ? new Date(item.due_date).toLocaleDateString() : 'No due date'}
                     </Text>
                 </View>
                 <View style={styles.progressInfo}>
@@ -78,9 +83,9 @@ const EmployeeTasksScreen = ({ navigation }: any) => {
                 <View style={[styles.progressBarFill, { width: `${item.progress || 0}%`, backgroundColor: getStatusColor(item.status) }]} />
             </View>
 
-            {/* Subtext hinting at subtasks */}
+            {/* Subtext hinting at chat */}
             <View style={styles.hintRow}>
-                <Text style={styles.hintText}>Tap to view subtasks & updates</Text>
+                <Text style={styles.hintText}>Tap to view task details & chat</Text>
                 <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
             </View>
         </TouchableOpacity>
@@ -93,7 +98,7 @@ const EmployeeTasksScreen = ({ navigation }: any) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={24} color="#000" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Assigned Stages</Text>
+                <Text style={styles.headerTitle}>My Tasks</Text>
                 <View style={{ width: 32 }} />
             </View>
 
@@ -103,17 +108,17 @@ const EmployeeTasksScreen = ({ navigation }: any) => {
                 </View>
             ) : (
                 <FlatList
-                    data={phases}
+                    data={tasks}
                     renderItem={renderItem}
                     keyExtractor={(item) => item.id.toString()}
                     contentContainerStyle={styles.list}
                     refreshControl={
-                        <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchPhases(); }} />
+                        <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchTasks(); }} />
                     }
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
-                            <Ionicons name="layers-outline" size={64} color="#ccc" />
-                            <Text style={styles.emptyText}>No stages assigned to you.</Text>
+                            <Ionicons name="checkmark-done-outline" size={64} color="#ccc" />
+                            <Text style={styles.emptyText}>No tasks assigned to you.</Text>
                         </View>
                     }
                 />

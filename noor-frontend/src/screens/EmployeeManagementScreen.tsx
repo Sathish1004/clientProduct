@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-    View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal, TextInput, Alert, ActivityIndicator
+    View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal, TextInput, Alert, ActivityIndicator, Image
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
@@ -13,6 +13,7 @@ interface Employee {
     role: 'admin' | 'employee';
     status: 'Active' | 'Inactive';
     created_at: string;
+    profile_image?: string;
 }
 
 const EmployeeManagementScreen = ({ navigation, route }: any) => {
@@ -205,7 +206,14 @@ const EmployeeManagementScreen = ({ navigation, route }: any) => {
                         <View key={emp.id} style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <View style={styles.avatar}>
-                                    <Text style={styles.avatarText}>{emp.name.charAt(0).toUpperCase()}</Text>
+                                    {emp.profile_image ? (
+                                        <Image
+                                            source={{ uri: `${api.defaults.baseURL?.replace('/api', '')}${emp.profile_image}` }}
+                                            style={{ width: '100%', height: '100%', borderRadius: 24 }}
+                                        />
+                                    ) : (
+                                        <Text style={styles.avatarText}>{emp.name.charAt(0).toUpperCase()}</Text>
+                                    )}
                                 </View>
                                 <View style={styles.info}>
                                     <Text style={styles.name}>{emp.name}</Text>

@@ -43,6 +43,8 @@ router.put('/tasks/:id/status', verifyToken, siteController.updateTaskStatus);
 // Employee Tasks
 router.get('/employee/dashboard-stats', verifyToken, siteController.getEmployeeDashboardStats);
 router.get('/employee/phases', verifyToken, siteController.getEmployeePhases);
+router.get('/employee/profile', verifyToken, siteController.getEmployeeProfile);
+router.put('/employee/profile', verifyToken, siteController.updateEmployeeProfile);
 router.get('/employee/tasks', verifyToken, siteController.getEmployeeTasks);
 router.get('/tasks/:taskId', verifyToken, siteController.getTaskDetails);
 router.post('/tasks/:taskId/updates', verifyToken, taskController.addTaskUpdate);
@@ -59,6 +61,7 @@ router.get('/phases/:id/details', verifyToken, siteController.getPhaseDetails);
 router.post('/phases/:id/todos', verifyToken, siteController.addPhaseTodo);
 router.put('/phases/todos/:todoId/toggle', verifyToken, siteController.togglePhaseTodo);
 router.post('/phases/:id/updates', verifyToken, siteController.addPhaseUpdate);
+router.put('/phases/:id/complete', verifyToken, siteController.completePhase);
 router.put('/phases/:id/approve', verifyToken, siteController.approvePhase);
 router.put('/phases/:id/reject', verifyToken, siteController.rejectPhase);
 router.post('/phases/:id/messages', verifyToken, siteController.sendPhaseMessage);

@@ -102,6 +102,120 @@ const GalleryAudioItem = ({ uri }: { uri: string }) => {
 };
 
 
+
+const ChatAudioItem = ({ uri, isMe }: { uri: string, isMe: boolean }) => {
+    const [sound, setSound] = useState<Audio.Sound | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [duration, setDuration] = useState(0);
+    const [position, setPosition] = useState(0);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+        return () => {
+            if (sound) sound.unloadAsync();
+        };
+    }, [sound]);
+
+    const handlePlayPause = async () => {
+        if (isLoading) return;
+
+        if (!sound) {
+            setIsLoading(true);
+            try {
+                const { sound: newSound, status } = await Audio.Sound.createAsync(
+                    { uri },
+                    { shouldPlay: true },
+                    onPlaybackStatusUpdate
+                );
+                setSound(newSound);
+                setIsPlaying(true);
+                if (status.isLoaded) {
+                    setDuration(status.durationMillis || 0);
+                }
+            } catch (error) {
+                console.error("Audio load error", error);
+            } finally {
+                setIsLoading(false);
+            }
+        } else {
+            if (isPlaying) {
+                await sound.pauseAsync();
+                setIsPlaying(false);
+            } else {
+                await sound.playAsync();
+                setIsPlaying(true);
+            }
+        }
+    };
+
+    const onPlaybackStatusUpdate = (status: any) => {
+        if (status.isLoaded) {
+            setPosition(status.positionMillis);
+            setDuration(status.durationMillis || 0);
+            setIsPlaying(status.isPlaying);
+            if (status.didJustFinish) {
+                setIsPlaying(false);
+                sound?.setPositionAsync(0);
+            }
+        }
+    };
+
+    const formatTime = (millis: number) => {
+        const totalSeconds = Math.floor(millis / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    };
+
+    const styles = {
+        container: {
+            flexDirection: 'row' as const,
+            alignItems: 'center' as const,
+            backgroundColor: isMe ? 'rgba(255,255,255,0.2)' : '#E5E7EB',
+            borderRadius: 12,
+            padding: 8,
+            minWidth: 150
+        },
+        icon: isMe ? "#111827" : "#374151",
+        text: {
+            color: isMe ? "#111827" : "#374151",
+            fontSize: 11,
+            fontWeight: '600' as const,
+            marginLeft: 8
+        },
+        progressBarConfig: {
+            bg: isMe ? 'rgba(0,0,0,0.1)' : '#D1D5DB',
+            fill: isMe ? '#111827' : '#374151'
+        }
+    };
+
+    return (
+        <View style={styles.container}>
+            <TouchableOpacity onPress={handlePlayPause} disabled={isLoading}>
+                {isLoading ? (
+                    <ActivityIndicator size="small" color={styles.icon} />
+                ) : (
+                    <Ionicons name={isPlaying ? "pause" : "play"} size={24} color={styles.icon} />
+                )}
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, marginLeft: 8 }}>
+                <View style={{ height: 3, backgroundColor: styles.progressBarConfig.bg, borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                    <View style={{
+                        width: `${duration > 0 ? (position / duration) * 100 : 0}%`,
+                        height: '100%',
+                        backgroundColor: styles.progressBarConfig.fill
+                    }} />
+                </View>
+                <Text style={styles.text}>
+                    {formatTime(position)} / {formatTime(duration)}
+                </Text>
+            </View>
+        </View>
+    );
+};
+
+
 const StageProgressScreen = ({ route, navigation }: any) => {
     const { phaseId, taskId, siteName } = route.params || {};
     const { user } = useContext(AuthContext);
@@ -329,7 +443,17 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                 });
                 setUpdates(uniqueUpdates);
 
-                setMessages(response.data.messages || []);
+                // ONE-TASK-ONE-CHAT: All users see the same chat for this task
+                // Messages are loaded purely by taskId - no filtering by user
+                const taskMessages = response.data.messages || [];
+                const stageMessages = response.data.stage_messages || [];
+
+                // Combine and sort by timestamp - everyone sees the same messages
+                const combinedMessages = [...taskMessages, ...stageMessages].sort((a, b) =>
+                    new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                );
+
+                setMessages(combinedMessages);
 
             } else {
                 // STAGE MODE (Legacy)
@@ -337,7 +461,7 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                 const response = await api.get(`/phases/${phaseId}/details`);
 
                 const phaseData = response.data.phase;
-                const tasks = response.data.subTasks || [];
+                const tasks = response.data.tasks || [];
 
                 // Derive Dates if missing on Phase
                 if (!phaseData.start_date && tasks.length > 0) {
@@ -351,7 +475,14 @@ const StageProgressScreen = ({ route, navigation }: any) => {
 
                 setPhase(phaseData);
                 setTodos(response.data.todos);
-                setSubTasks(tasks);
+
+                // Filter tasks to show only those assigned to the current user
+                const myTasks = tasks.filter((task: any) => {
+                    // Check if user is assigned to this task
+                    return task.assignments && task.assignments.some((a: any) => String(a.id) === String(user?.id));
+                });
+
+                setSubTasks(myTasks);
 
                 // Filter out duplicate consecutive updates
                 const allUpdates = response.data.updates || [];
@@ -365,7 +496,8 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                 });
                 setUpdates(uniqueUpdates);
 
-                setMessages(response.data.messages);
+                // ONE-TASK-ONE-CHAT: All users see the same messages
+                setMessages(response.data.messages || []);
             }
         } catch (error) {
             console.error('Error fetching details:', error);
@@ -413,6 +545,8 @@ const StageProgressScreen = ({ route, navigation }: any) => {
         try {
             await api.put(`/tasks/${task.id}/approve`);
             setSubTasks((prev: any[]) => prev.map(t => t.id === task.id ? { ...t, status: 'Completed' } : t));
+            // Also update main phase/task status for UI header
+            setPhase((prev: any) => ({ ...prev, status: 'Completed' }));
             Alert.alert("Success", "Task approved and marked as completed.");
         } catch (error) {
             console.error('Error approving task:', error);
@@ -424,6 +558,8 @@ const StageProgressScreen = ({ route, navigation }: any) => {
         try {
             await api.put(`/tasks/${task.id}/reject`, { reason: 'Admin requested changes' });
             setSubTasks((prev: any[]) => prev.map(t => t.id === task.id ? { ...t, status: 'In Progress' } : t));
+            // Also update main phase/task status for UI header
+            setPhase((prev: any) => ({ ...prev, status: 'In Progress' }));
             Alert.alert("Success", "Changes requested. Task reverted to In Progress.");
         } catch (error) {
             console.error('Error rejecting task:', error);
@@ -443,15 +579,21 @@ const StageProgressScreen = ({ route, navigation }: any) => {
 
         try {
             setSubmitLoading(true);
-            // Submit as 100% complete for approval
-            await api.post(`/phases/${currentPhaseId}/updates`, {
-                progress: 100,
-                message: 'Work completed - Ready for admin approval'
-            });
+
+            if (taskId) {
+                // TASK MODE: Complete specific task
+                await api.put(`/tasks/${taskId}/complete`);
+            } else {
+                // PHASE MODE: Complete entire phase
+                // Submit as 100% complete for approval
+                await api.post(`/phases/${currentPhaseId}/updates`, {
+                    progress: 100
+                });
+            }
 
             setPhase((prev: any) => ({ ...prev, status: 'waiting_for_approval', progress: 100 }));
             Alert.alert("Success", "Work submitted for admin approval");
-            fetchData();
+
         } catch (error) {
             console.error('Error marking complete:', error);
             Alert.alert("Error", "Failed to submit for approval");
@@ -646,6 +788,106 @@ const StageProgressScreen = ({ route, navigation }: any) => {
         return status?.replace('_', ' ') || 'In Progress';
     };
 
+    const renderFeed = () => {
+        const feed = [
+            ...updates.map(u => ({ ...u, itemType: 'update' })),
+            ...messages.map(m => ({ ...m, itemType: 'message' }))
+        ]
+            .filter(item => {
+                // Filter out "Work completed" messages and generic updates
+                if (item.message && item.message.includes('Work completed - Ready for admin approval')) return false;
+                if (item.content && item.content.includes('Work completed - Ready for admin approval')) return false;
+                // Also filter out generic auto-generated updates if wanted
+                if (item.itemType === 'update' && item.message === 'Progress Update') return false;
+                return true;
+            })
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        if (feed.length === 0) {
+            return <Text style={styles.emptyTextSimple}>No activity yet</Text>;
+        }
+
+        return feed.map((item, idx) => {
+            if (item.itemType === 'update') {
+                return (
+                    <View key={`u-${idx}`} style={styles.updateCard}>
+                        <View style={styles.updateHeader}>
+                            <Text style={styles.updateUser}>{item.employee_name || 'Employee'}</Text>
+                            <Text style={styles.updateTime}>{new Date(item.created_at).toLocaleString()}</Text>
+                        </View>
+                        <View style={styles.progressChangeBadge}>
+                            <Text style={styles.progressChangeText}>
+                                {item.previous_progress}% → {item.new_progress}%
+                            </Text>
+                        </View>
+                        <Text style={styles.updateMessage}>{item.message}</Text>
+                    </View>
+                );
+            } else {
+                const isMe = user && item.sender_id === user.id;
+                return (
+                    <View key={`m-${idx}`} style={[
+                        styles.messageBubble,
+                        isMe ? styles.myMessage : styles.otherMessage
+                    ]}>
+                        {!isMe && <Text style={styles.senderName}>{item.sender_name}</Text>}
+
+                        {item.media_url ? (
+                            <View>
+                                <View style={{ borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
+                                    {item.type === 'image' && (
+                                        <Image
+                                            source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                            style={{ width: 220, height: 220, backgroundColor: '#EEE' }}
+                                            resizeMode="cover"
+                                        />
+                                    )}
+                                    {item.type === 'video' && (
+                                        <Video
+                                            source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
+                                            style={{ width: 220, height: 220, backgroundColor: '#000' }}
+                                            useNativeControls
+                                            resizeMode={ResizeMode.CONTAIN}
+                                            isLooping={false}
+                                        />
+                                    )}
+
+                                    {item.content ? (
+                                        <View style={{
+                                            position: 'absolute', bottom: 0, left: 0, right: 0,
+                                            backgroundColor: 'rgba(0,0,0,0.5)', padding: 8
+                                        }}>
+                                            <Text style={{ color: '#FFF', fontSize: 13 }}>{item.content}</Text>
+                                        </View>
+                                    ) : null}
+                                </View>
+
+                                {item.type === 'audio' && (
+                                    <View style={{ marginTop: 4 }}>
+                                        <ChatAudioItem
+                                            uri={(api.defaults.baseURL?.replace('/api', '') || '') + item.media_url}
+                                            isMe={!!isMe}
+                                        />
+                                    </View>
+                                )}
+                            </View>
+                        ) : (
+                            item.content ? (
+                                <Text style={isMe ? styles.myMessageText : styles.otherMessageText}>
+                                    {item.content}
+                                </Text>
+                            ) : null
+                        )}
+
+                        <Text style={styles.messageTime}>
+                            {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                    </View>
+                );
+            }
+        });
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
@@ -687,6 +929,19 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                             {submitLoading ? 'Submitting...' : 'Mark Complete'}
                         </Text>
                     </TouchableOpacity>
+                ) : !isAdmin && phase?.status === 'waiting_for_approval' ? (
+                    <View style={{
+                        backgroundColor: '#FEF3C7',
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 20,
+                        borderWidth: 1,
+                        borderColor: '#F59E0B'
+                    }}>
+                        <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 12 }}>
+                            ⏳ Waiting for Approval
+                        </Text>
+                    </View>
                 ) : (
                     <View style={{ flexDirection: 'row', gap: 12 }}>
                         <TouchableOpacity>
@@ -753,7 +1008,18 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                         const canComplete = isAdmin || userIsAssigned;
 
                         return (
-                            <View key={index} style={styles.todoItem}>
+                            <TouchableOpacity
+                                key={index}
+                                style={styles.todoItem}
+                                onPress={() => {
+                                    // Navigate to task-specific detail screen
+                                    navigation.navigate('StageProgress', {
+                                        taskId: task.id,
+                                        siteName: phase?.site_name || siteName
+                                    });
+                                }}
+                                activeOpacity={0.7}
+                            >
                                 <View style={{ flex: 1 }}>
                                     <Text style={[styles.todoText, task.status === 'Completed' && styles.todoTextDone]}>
                                         {task.name}
@@ -773,52 +1039,89 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                                                 </View>
                                             ))
                                         ) : (
-                                            <Text style={{ fontSize: 10, color: '#9CA3AF', fontStyle: 'italic' }}>Unassigned</Text>
+                                            <Text style={{ fontSize: 11, color: '#9CA3AF', fontStyle: 'italic' }}>Unassigned</Text>
                                         )}
                                     </View>
                                 </View>
 
-                                {/* Action: Button or Badge */}
-                                {task.status === 'Completed' ? (
-                                    <View style={{ backgroundColor: '#DEF7EC', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}>
-                                        <Text style={{ color: '#03543F', fontWeight: 'bold', fontSize: 12 }}>Completed</Text>
-                                    </View>
-                                ) : task.status === 'waiting_for_approval' ? (
-                                    isAdmin ? (
+                                {/* Task Action Button / Status Badge */}
+                                {
+                                    // 1. Admin Actions (Approve/Reject)
+                                    isAdmin && task.status === 'waiting_for_approval' ? (
                                         <View style={{ flexDirection: 'row', gap: 8 }}>
-                                            {/* Reject Button */}
                                             <TouchableOpacity
                                                 style={{ backgroundColor: '#FEE2E2', padding: 8, borderRadius: 20, borderWidth: 1, borderColor: '#EF4444' }}
-                                                onPress={() => handleRejectTask(task)}
+                                                onPress={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRejectTask(task);
+                                                }}
                                             >
                                                 <Ionicons name="close" size={16} color="#EF4444" />
                                             </TouchableOpacity>
 
-                                            {/* Approve Button */}
                                             <TouchableOpacity
                                                 style={{ backgroundColor: '#D1FAE5', padding: 8, borderRadius: 20, borderWidth: 1, borderColor: '#10B981' }}
-                                                onPress={() => handleApproveTask(task)}
+                                                onPress={(e) => {
+                                                    e.stopPropagation();
+                                                    handleApproveTask(task);
+                                                }}
                                             >
                                                 <Ionicons name="checkmark" size={16} color="#10B981" />
                                             </TouchableOpacity>
                                         </View>
-                                    ) : (
-                                        <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}>
-                                            <Text style={{ color: '#92400E', fontWeight: 'bold', fontSize: 12 }}>Pending Approval</Text>
-                                        </View>
-                                    )
-                                ) : (
-                                    /* HIDE FOR ADMIN: Only Assigned Employee can submit for approval */
-                                    !isAdmin && canComplete && task.status !== 'waiting_for_approval' && (
-                                        <TouchableOpacity
-                                            style={{ backgroundColor: '#1E40AF', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 }}
-                                            onPress={() => handleCompleteTask(task)}
-                                        >
-                                            <Text style={{ color: '#FFF', fontWeight: '600', fontSize: 12 }}>Mark Completed</Text>
-                                        </TouchableOpacity>
-                                    )
-                                )}
-                            </View>
+                                    ) :
+                                        // 2. Waiting Badge
+                                        task.status === 'waiting_for_approval' ? (
+                                            <View style={{
+                                                backgroundColor: '#FEF3C7',
+                                                paddingHorizontal: 12,
+                                                paddingVertical: 6,
+                                                borderRadius: 20,
+                                                borderWidth: 1,
+                                                borderColor: '#F59E0B'
+                                            }}>
+                                                <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 10 }}>Waiting</Text>
+                                            </View>
+                                        ) :
+                                            // 3. Completed/Approved Badge
+                                            task.status === 'Completed' || task.status === 'Approved' ? (
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                                    <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                                                    <Text style={{
+                                                        color: '#10B981',
+                                                        fontWeight: '700',
+                                                        fontSize: 12
+                                                    }}>
+                                                        Done
+                                                    </Text>
+                                                </View>
+                                            ) :
+                                                // 4. Mark Complete Button (Default)
+                                                (
+                                                    <TouchableOpacity
+                                                        onPress={(e) => {
+                                                            e.stopPropagation();
+                                                            handleCompleteTask(task);
+                                                        }}
+                                                        style={{
+                                                            backgroundColor: canComplete ? '#10B981' : '#E5E7EB',
+                                                            paddingHorizontal: 12,
+                                                            paddingVertical: 6,
+                                                            borderRadius: 20
+                                                        }}
+                                                        disabled={!canComplete}
+                                                    >
+                                                        <Text style={{
+                                                            color: canComplete ? '#FFF' : '#9CA3AF',
+                                                            fontWeight: '700',
+                                                            fontSize: 12
+                                                        }}>
+                                                            Done
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                )
+                                }
+                            </TouchableOpacity>
                         );
                     })}
                     {subTasks.length === 0 && <Text style={styles.emptyTextSimple}>No tasks defined</Text>}
@@ -827,167 +1130,12 @@ const StageProgressScreen = ({ route, navigation }: any) => {
 
 
                 {/* Unified Activity Feed */}
-                {/* Unified Activity Feed */}
                 <View style={styles.feedContainer}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                         <Text style={styles.sectionTitle}>ACTIVITY & UPDATES</Text>
-                        <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 8, padding: 2 }}>
-                            <TouchableOpacity
-                                onPress={() => setViewMode('chat')}
-                                style={{
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 12,
-                                    backgroundColor: viewMode === 'chat' ? '#FFF' : 'transparent',
-                                    borderRadius: 6,
-                                    elevation: viewMode === 'chat' ? 1 : 0
-                                }}
-                            >
-                                <Text style={{ fontSize: 12, fontWeight: '600', color: viewMode === 'chat' ? '#111827' : '#6B7280' }}>Msg</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                onPress={() => setViewMode('gallery')}
-                                style={{
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 12,
-                                    backgroundColor: viewMode === 'gallery' ? '#FFF' : 'transparent',
-                                    borderRadius: 6,
-                                    elevation: viewMode === 'gallery' ? 1 : 0
-                                }}
-                            >
-                                <Text style={{ fontSize: 12, fontWeight: '600', color: viewMode === 'gallery' ? '#111827' : '#6B7280' }}>Gallery</Text>
-                            </TouchableOpacity>
-                        </View>
                     </View>
 
-                    {viewMode === 'gallery' ? (
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                            {messages.filter(m => m.media_url && (m.type === 'image' || m.type === 'video' || m.type === 'audio')).length === 0 ? (
-                                <Text style={styles.emptyTextSimple}>No media found</Text>
-                            ) : (
-                                messages.filter(m => m.media_url && (m.type === 'image' || m.type === 'video' || m.type === 'audio')).map((item, idx) => (
-                                    <View key={`gal-${idx}`} style={{ width: '31%', aspectRatio: 1, borderRadius: 8, overflow: 'hidden', backgroundColor: '#F3F4F6', position: 'relative' }}>
-                                        {item.type === 'image' ? (
-                                            <Image
-                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
-                                                style={{ width: '100%', height: '100%' }}
-                                                resizeMode="cover"
-                                            />
-                                        ) : item.type === 'video' ? (
-                                            <Video
-                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
-                                                style={{ width: '100%', height: '100%' }}
-                                                resizeMode={ResizeMode.COVER}
-                                            />
-                                        ) : (
-                                            <GalleryAudioItem uri={(api.defaults.baseURL?.replace('/api', '') || '') + item.media_url} />
-                                        )}
-                                        {/* Caption Overlay */}
-                                        {item.content ? (
-                                            <View style={{
-                                                position: 'absolute', bottom: 0, left: 0, right: 0,
-                                                backgroundColor: 'rgba(0,0,0,0.6)', padding: 4
-                                            }}>
-                                                <Text numberOfLines={2} style={{ color: '#FFF', fontSize: 10 }}>{item.content}</Text>
-                                            </View>
-                                        ) : null}
-                                    </View>
-                                ))
-                            )}
-                        </View>
-                    ) : (
-                        (() => {
-                            const feed = [
-                                ...updates.map(u => ({ ...u, type: 'update' })),
-                                // Filter out messages with media_url so they only appear in Gallery
-                                ...messages.filter(m => !m.media_url).map(m => ({ ...m, type: 'message' }))
-                            ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-                            if (feed.length === 0) {
-                                return <Text style={styles.emptyTextSimple}>No activity yet</Text>;
-                            }
-
-                            return feed.map((item, idx) => {
-                                if (item.type === 'update') {
-                                    return (
-                                        <View key={`u-${idx}`} style={styles.updateCard}>
-                                            <View style={styles.updateHeader}>
-                                                <Text style={styles.updateUser}>{item.employee_name || 'Employee'}</Text>
-                                                <Text style={styles.updateTime}>{new Date(item.created_at).toLocaleString()}</Text>
-                                            </View>
-                                            <View style={styles.progressChangeBadge}>
-                                                <Text style={styles.progressChangeText}>
-                                                    {item.previous_progress}% → {item.new_progress}%
-                                                </Text>
-                                            </View>
-                                            <Text style={styles.updateMessage}>{item.message}</Text>
-                                        </View>
-                                    );
-                                } else {
-                                    const isMe = user && item.sender_id === user.id;
-                                    return (
-                                        <View key={`m-${idx}`} style={[
-                                            styles.messageBubble,
-                                            isMe ? styles.myMessage : styles.otherMessage
-                                        ]}>
-                                            {!isMe && <Text style={styles.senderName}>{item.sender_name}</Text>}
-
-                                            {/* Media Content with Caption Overlay */}
-                                            {item.media_url ? (
-                                                <View>
-                                                    <View style={{ borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
-                                                        {item.type === 'image' && (
-                                                            <Image
-                                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
-                                                                style={{ width: 220, height: 220, backgroundColor: '#EEE' }}
-                                                                resizeMode="cover"
-                                                            />
-                                                        )}
-                                                        {item.type === 'video' && (
-                                                            <Video
-                                                                source={{ uri: (api.defaults.baseURL?.replace('/api', '') || '') + item.media_url }}
-                                                                style={{ width: 220, height: 220, backgroundColor: '#000' }}
-                                                                useNativeControls
-                                                                resizeMode={ResizeMode.CONTAIN}
-                                                                isLooping={false}
-                                                            />
-                                                        )}
-
-                                                        {/* Caption as Overlay for Media */}
-                                                        {item.content ? (
-                                                            <View style={{
-                                                                position: 'absolute', bottom: 0, left: 0, right: 0,
-                                                                backgroundColor: 'rgba(0,0,0,0.5)', padding: 8
-                                                            }}>
-                                                                <Text style={{ color: '#FFF', fontSize: 13 }}>{item.content}</Text>
-                                                            </View>
-                                                        ) : null}
-                                                    </View>
-
-                                                    {item.type === 'audio' && (
-                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.1)', padding: 8, borderRadius: 16, marginTop: 4 }}>
-                                                            <Ionicons name="mic" size={24} color={isMe ? "#FFF" : "#374151"} />
-                                                            <Text style={{ color: isMe ? "#FFF" : "#374151", fontSize: 12 }}>Audio Note (Tap to play)</Text>
-                                                        </View>
-                                                    )}
-                                                </View>
-                                            ) : (
-                                                /* Text Only Message */
-                                                item.content ? (
-                                                    <Text style={isMe ? styles.myMessageText : styles.otherMessageText}>
-                                                        {item.content}
-                                                    </Text>
-                                                ) : null
-                                            )}
-
-                                            <Text style={styles.messageTime}>
-                                                {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </Text>
-                                        </View>
-                                    );
-                                }
-                            });
-                        })()
-                    )}
+                    {renderFeed()}
                 </View>
 
             </ScrollView>
@@ -995,105 +1143,107 @@ const StageProgressScreen = ({ route, navigation }: any) => {
             {/* Bottom Input Area or Unassigned Banner */}
             {/* Show Input if User is Admin OR Assigned to at least one task */}
             {/* Show Input for any logged in user (Admin or Employee) */}
-            {(user) ? (
-                <>
-                    {mediaUri && (
-                        <View style={styles.mediaPreview}>
-                            <Text style={{ fontSize: 12, color: '#6B7280' }}>Attached: {mediaType}</Text>
-                            <TouchableOpacity onPress={() => { setMediaUri(null); setMediaType(null); }}>
-                                <Ionicons name="close-circle" size={20} color="#EF4444" />
-                            </TouchableOpacity>
-                        </View>
-                    )}
-
-                    <KeyboardAvoidingView
-                        behavior={Platform.OS === "ios" ? "padding" : "height"}
-                        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
-                        style={{ flexShrink: 1 }} // Allow it to take available space but shrink if needed
-                    >
-                        <View style={styles.inputArea}>
-                            {!isAdmin && (
-                                <TouchableOpacity
-                                    style={styles.addProgressButton}
-                                    onPress={() => setUpdateModalVisible(true)}
-                                >
-                                    <Ionicons name="add" size={20} color="#FFF" />
-                                    <Text style={styles.addProgressText}>Add Progress</Text>
+            {
+                (user) ? (
+                    <>
+                        {mediaUri && (
+                            <View style={styles.mediaPreview}>
+                                <Text style={{ fontSize: 12, color: '#6B7280' }}>Attached: {mediaType}</Text>
+                                <TouchableOpacity onPress={() => { setMediaUri(null); setMediaType(null); }}>
+                                    <Ionicons name="close-circle" size={20} color="#EF4444" />
                                 </TouchableOpacity>
-                            )}
+                            </View>
+                        )}
 
-                            {/* Message Input or Recording Visualizer */}
-                            {recording ? (
-                                <View style={[styles.messageInputContainer, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF2F2' }]}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                        {[1, 2, 3, 4, 5, 6, 7].map((bar, idx) => (
-                                            <View
-                                                key={idx}
-                                                style={{
-                                                    width: 4,
-                                                    height: 8 + (Math.random() * 16), // Simple fake visualizer
-                                                    backgroundColor: '#DC2626',
-                                                    borderRadius: 2
-                                                }}
-                                            />
-                                        ))}
-                                    </View>
-                                    <Text style={{ marginLeft: 12, color: '#DC2626', fontWeight: '600', fontSize: 12 }}>
-                                        Recording... {recordingDuration}s / 30s
-                                    </Text>
-                                </View>
-                            ) : (
-                                <View style={styles.messageInputContainer}>
-                                    <TextInput
-                                        style={styles.messageInput}
-                                        placeholder="Message..."
-                                        value={messageText}
-                                        onChangeText={setMessageText}
-                                        multiline
-                                    />
-                                    <TouchableOpacity onPress={pickImage}>
-                                        <Ionicons name="image-outline" size={20} color="#6B7280" style={{ marginRight: 8 }} />
+                        <KeyboardAvoidingView
+                            behavior={Platform.OS === "ios" ? "padding" : "height"}
+                            keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+                            style={{ flexShrink: 1 }} // Allow it to take available space but shrink if needed
+                        >
+                            <View style={styles.inputArea}>
+                                {!isAdmin && (
+                                    <TouchableOpacity
+                                        style={styles.addProgressButton}
+                                        onPress={() => setUpdateModalVisible(true)}
+                                    >
+                                        <Ionicons name="add" size={20} color="#FFF" />
+                                        <Text style={styles.addProgressText}>Add Progress</Text>
                                     </TouchableOpacity>
-
-                                </View>
-                            )}
-
-                            {/* Mic / Send Button */}
-                            <TouchableOpacity
-                                style={[styles.micButton, recording && { backgroundColor: '#FEE2E2' }]}
-                                onPress={() => {
-                                    if (messageText.trim() || mediaUri) {
-                                        handleSendMessage();
-                                    } else if (recording) {
-                                        stopRecording();
-                                    } else {
-                                        startRecording();
-                                    }
-                                }}
-                                onLongPress={!messageText.trim() && !mediaUri ? startRecording : undefined}
-                                disabled={loading || (!!mediaUri && !mediaType)}
-                            >
-                                {loading && (messageText || mediaUri) ? ( // visual feedback if sending
-                                    <ActivityIndicator size="small" color="#8B0000" />
-                                ) : (
-                                    <Ionicons
-                                        name={messageText.trim() || mediaUri ? "send" : (recording ? "stop" : "mic")}
-                                        size={20}
-                                        color={recording ? "#EF4444" : "#6B7280"}
-                                    />
                                 )}
-                            </TouchableOpacity>
-                        </View>
-                    </KeyboardAvoidingView>
+
+                                {/* Message Input or Recording Visualizer */}
+                                {recording ? (
+                                    <View style={[styles.messageInputContainer, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF2F2' }]}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                            {[1, 2, 3, 4, 5, 6, 7].map((bar, idx) => (
+                                                <View
+                                                    key={idx}
+                                                    style={{
+                                                        width: 4,
+                                                        height: 8 + (Math.random() * 16), // Simple fake visualizer
+                                                        backgroundColor: '#DC2626',
+                                                        borderRadius: 2
+                                                    }}
+                                                />
+                                            ))}
+                                        </View>
+                                        <Text style={{ marginLeft: 12, color: '#DC2626', fontWeight: '600', fontSize: 12 }}>
+                                            Recording... {recordingDuration}s / 30s
+                                        </Text>
+                                    </View>
+                                ) : (
+                                    <View style={styles.messageInputContainer}>
+                                        <TextInput
+                                            style={styles.messageInput}
+                                            placeholder="Message..."
+                                            value={messageText}
+                                            onChangeText={setMessageText}
+                                            multiline
+                                        />
+                                        <TouchableOpacity onPress={pickImage}>
+                                            <Ionicons name="image-outline" size={20} color="#6B7280" style={{ marginRight: 8 }} />
+                                        </TouchableOpacity>
+
+                                    </View>
+                                )}
+
+                                {/* Mic / Send Button */}
+                                <TouchableOpacity
+                                    style={[styles.micButton, recording && { backgroundColor: '#FEE2E2' }]}
+                                    onPress={() => {
+                                        if (messageText.trim() || mediaUri) {
+                                            handleSendMessage();
+                                        } else if (recording) {
+                                            stopRecording();
+                                        } else {
+                                            startRecording();
+                                        }
+                                    }}
+                                    onLongPress={!messageText.trim() && !mediaUri ? startRecording : undefined}
+                                    disabled={loading || (!!mediaUri && !mediaType)}
+                                >
+                                    {loading && (messageText || mediaUri) ? ( // visual feedback if sending
+                                        <ActivityIndicator size="small" color="#8B0000" />
+                                    ) : (
+                                        <Ionicons
+                                            name={messageText.trim() || mediaUri ? "send" : (recording ? "stop" : "mic")}
+                                            size={20}
+                                            color={recording ? "#EF4444" : "#6B7280"}
+                                        />
+                                    )}
+                                </TouchableOpacity>
+                            </View>
+                        </KeyboardAvoidingView>
 
 
-                </>
-            ) : (
-                <View style={{ padding: 20, backgroundColor: '#FEF2F2', borderTopWidth: 1, borderTopColor: '#FECACA', alignItems: 'center' }}>
-                    <Ionicons name="alert-circle-outline" size={24} color="#DC2626" style={{ marginBottom: 4 }} />
-                    <Text style={{ color: '#DC2626', fontWeight: '600', fontSize: 14 }}>Assign an employee to start progress</Text>
-                </View>
-            )}
+                    </>
+                ) : (
+                    <View style={{ padding: 20, backgroundColor: '#FEF2F2', borderTopWidth: 1, borderTopColor: '#FECACA', alignItems: 'center' }}>
+                        <Ionicons name="alert-circle-outline" size={24} color="#DC2626" style={{ marginBottom: 4 }} />
+                        <Text style={{ color: '#DC2626', fontWeight: '600', fontSize: 14 }}>Assign an employee to start progress</Text>
+                    </View>
+                )
+            }
 
             {/* Add Progress Modal */}
             <Modal
@@ -1164,9 +1314,7 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                                 )}
 
                                 {mediaType === 'audio' && (
-                                    <View style={{ alignItems: 'center', gap: 12 }}>
-                                        <Ionicons name="mic-circle" size={64} color="#8B0000" />
-                                        <Text style={{ color: '#4B5563', fontWeight: '500' }}>Voice Note Recorded</Text>
+                                    <View style={{ gap: 8, alignItems: 'center' }}>
                                         <TouchableOpacity
                                             style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isPlayingPreview ? '#DCFCE7' : '#E5E7EB', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 }}
                                             onPress={playPreview}
@@ -1254,7 +1402,7 @@ const StageProgressScreen = ({ route, navigation }: any) => {
                 </View>
             </Modal>
 
-        </SafeAreaView>
+        </SafeAreaView >
     );
 };
 
@@ -1598,7 +1746,7 @@ const styles = StyleSheet.create({
         borderColor: '#E5E7EB',
     },
     myMessageText: {
-        color: '#064E3B',
+        color: '#111827', // Black/Dark for readability
     },
     otherMessageText: {
         color: '#1F2937',

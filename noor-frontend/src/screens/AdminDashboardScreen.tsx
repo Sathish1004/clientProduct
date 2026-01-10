@@ -670,7 +670,7 @@ const AdminDashboardScreen = () => {
         return `${year}-${month}-${day}`;
     };
 
-    const submitCreateProject = async () => {
+    const submitCreateProject = async (shouldClose = true) => {
         if (!formData.name || !formData.address) {
             alert('Please fill in required fields');
             return;
@@ -691,7 +691,7 @@ const AdminDashboardScreen = () => {
                 if (response.status === 200) {
                     showToast('Project updated successfully', 'success');
                     fetchSites();
-                    handleCloseCreateModal();
+                    if (shouldClose) handleCloseCreateModal();
                     // Update selected site to reflect changes immediately if in detail view
                     setSelectedSite((prev: any) => ({
                         ...prev,
@@ -710,7 +710,7 @@ const AdminDashboardScreen = () => {
                 if (response.status === 201) {
                     showToast('Project created successfully', 'success');
                     fetchSites();
-                    handleCloseCreateModal();
+                    if (shouldClose) handleCloseCreateModal();
                 }
             }
         } catch (error) {
@@ -1312,8 +1312,8 @@ const AdminDashboardScreen = () => {
                                     setCreateModalVisible(true);
                                 }}
                             >
-                                <Ionicons name="add-outline" size={16} color="#8B0000" style={{ marginRight: 4 }} />
-                                <Text style={styles.filterChipText}>Project</Text>
+                                <Ionicons name="add-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                                <Text style={styles.filterChipText}>Site</Text>
                             </TouchableOpacity>
                             <View style={styles.newSearchBar}>
                                 <Ionicons name="search-outline" size={18} color="#9ca3af" />
@@ -1480,11 +1480,8 @@ const AdminDashboardScreen = () => {
                                                         </View>
                                                     </View>
 
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: isMobile ? 'space-between' : 'flex-end', width: isMobile ? '100%' : 'auto', paddingTop: isMobile ? 8 : 0, borderTopWidth: isMobile ? 1 : 0, borderTopColor: isMobile ? 'rgba(255,255,255,0.2)' : 'transparent' }}>
-                                                        <View style={styles.progressPill}>
-                                                            <Ionicons name="stats-chart" size={12} color="#8B0000" style={{ marginRight: 4 }} />
-                                                            <Text style={styles.progressPillText}>Progress</Text>
-                                                        </View>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'flex-end', width: isMobile ? '100%' : 'auto', paddingTop: isMobile ? 8 : 0, borderTopWidth: isMobile ? 1 : 0, borderTopColor: isMobile ? 'rgba(255,255,255,0.2)' : 'transparent' }}>
+
                                                         <TouchableOpacity
                                                             style={styles.iconButton}
                                                             onPress={() => {
@@ -2095,7 +2092,7 @@ const AdminDashboardScreen = () => {
                             <TouchableOpacity style={styles.cancelButton} onPress={handleCloseCreateModal}>
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.submitButton} onPress={submitCreateProject}>
+                            <TouchableOpacity style={styles.submitButton} onPress={() => submitCreateProject()}>
                                 <Text style={styles.submitButtonText}>{isEditing ? 'Update Project' : 'Create Project'}</Text>
                             </TouchableOpacity>
                         </View>
@@ -2399,6 +2396,12 @@ const AdminDashboardScreen = () => {
                                                     />
                                                 </View>
                                                 <TouchableOpacity
+                                                    onPress={() => submitCreateProject(false)}
+                                                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#ECFDF5', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
+                                                >
+                                                    <Ionicons name="save" size={18} color="#059669" />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
                                                     onPress={() => handleDeletePhase(phase.id, phase.name)}
                                                     style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center' }}
                                                 >
@@ -2411,39 +2414,31 @@ const AdminDashboardScreen = () => {
                             </View>
                         </View>
 
-                        {/* Danger Zone */}
+                        {/* Save Configuration Button */}
                         <TouchableOpacity
-                            style={styles.dangerZoneBtn}
-                            onPress={() => {
-                                Alert.alert(
-                                    'Delete Project',
-                                    'Are you sure you want to delete this project?',
-                                    [
-                                        { text: 'Cancel', style: 'cancel' },
-                                        {
-                                            text: 'Delete',
-                                            style: 'destructive',
-                                            onPress: async () => {
-                                                try {
-                                                    await api.delete(`/sites/${selectedSite?.id}`);
-                                                    setProjectSettingsVisible(false);
-                                                    setProjectModalVisible(false);
-                                                    fetchSites();
-                                                    showToast('Project deleted', 'success');
-                                                } catch (error) {
-                                                    Alert.alert('Error', 'Failed to delete project');
-                                                }
-                                            }
-                                        }
-                                    ]
-                                );
+                            style={{
+                                backgroundColor: '#ECFDF5',
+                                borderWidth: 1,
+                                borderColor: '#059669',
+                                borderRadius: 12,
+                                paddingVertical: 14,
+                                paddingHorizontal: 16,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                marginTop: 16,
+                                marginBottom: 32
+                            }}
+                            onPress={async () => {
+                                await submitCreateProject();
+                                setProjectSettingsVisible(false);
                             }}
                         >
                             <View>
-                                <Text style={styles.dangerZoneTitle}>Delete Project</Text>
-                                <Text style={styles.dangerZoneSubtitle}>Permanently remove all project data</Text>
+                                <Text style={{ fontSize: 14, fontWeight: '700', color: '#047857' }}>Save Configuration</Text>
+                                <Text style={{ fontSize: 10, color: '#059669', marginTop: 2 }}>Update all project details</Text>
                             </View>
-                            <Ionicons name="trash-outline" size={24} color="#DC2626" />
+                            <Ionicons name="save-outline" size={24} color="#059669" />
                         </TouchableOpacity>
                     </ScrollView>
                 </SafeAreaView>
@@ -2654,17 +2649,22 @@ const AdminDashboardScreen = () => {
                                 marginBottom: 40
                             }}
                             onPress={async () => {
-                                if (!newEmployee.name || !newEmployee.email || (!editingEmployeeId && !newEmployee.password)) {
-                                    Alert.alert('Error', 'Please fill in all required fields');
+                                if (!newEmployee.name || !newEmployee.email || !newEmployee.phone || (!editingEmployeeId && !newEmployee.password)) {
+                                    Alert.alert('Error', 'Please fill in all required fields (Name, Email, Phone, Role, Password)');
                                     return;
                                 }
 
+                                const payload = {
+                                    ...newEmployee,
+                                    role: newEmployee.role.toLowerCase()
+                                };
+
                                 try {
                                     if (editingEmployeeId) {
-                                        await api.put(`/employees/${editingEmployeeId}`, newEmployee);
+                                        await api.put(`/employees/${editingEmployeeId}`, payload);
                                         showToast('Worker updated successfully', 'success');
                                     } else {
-                                        await api.post('/employees', newEmployee);
+                                        await api.post('/employees', payload);
                                         showToast('Worker added successfully', 'success');
                                     }
                                     setEmployeeModalVisible(false);
@@ -4303,19 +4303,7 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.8)',
         fontWeight: '500',
     },
-    progressPill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 12,
-    },
-    progressPillText: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#8B0000',
-    },
+
     taskList: {
         padding: 16,
         backgroundColor: '#fff',

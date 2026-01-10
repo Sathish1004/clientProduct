@@ -8,6 +8,7 @@ const BrandIntroScreen = ({ onComplete }: { onComplete?: () => void }) => {
         // Auto-navigate after 3 seconds if onComplete is provided
         if (onComplete) {
             const timer = setTimeout(onComplete, 3000);
+            
             return () => clearTimeout(timer);
         }
     }, [onComplete]);

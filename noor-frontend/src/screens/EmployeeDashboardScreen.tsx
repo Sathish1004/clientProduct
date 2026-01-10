@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, RefreshControl, StyleSheet, FlatList, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, SafeAreaView, ScrollView, StatusBar, RefreshControl, StyleSheet, FlatList, useWindowDimensions, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import api from '../services/api';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 
 const EmployeeDashboardScreen = () => {
     const { user, logout } = useContext(AuthContext);
@@ -13,14 +13,20 @@ const EmployeeDashboardScreen = () => {
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('Dashboard');
     const { width } = useWindowDimensions();
+    const [searchQuery, setSearchQuery] = useState('');
 
     // Notifications
     const [notifications, setNotifications] = useState<any[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const [notificationDropdownVisible, setNotificationDropdownVisible] = useState(false);
 
+    useFocusEffect(
+        React.useCallback(() => {
+            fetchData();
+        }, [])
+    );
+
     useEffect(() => {
-        fetchData();
         fetchNotifications();
         const interval = setInterval(fetchNotifications, 10000);
         return () => clearInterval(interval);
@@ -58,19 +64,26 @@ const EmployeeDashboardScreen = () => {
 
     const fetchData = async () => {
         setLoading(true);
+
+        // Fetch Stats
         try {
-            const [statsRes, sitesRes] = await Promise.all([
-                api.get('/employee/dashboard-stats'),
-                api.get('/sites/assigned')
-            ]);
+            const statsRes = await api.get('/employee/dashboard-stats');
             console.log('[Frontend] Received stats:', statsRes.data);
-            setStats(statsRes.data);
-            setSites(sitesRes.data || []);
+            setStats(prev => ({ ...prev, ...statsRes.data }));
         } catch (error) {
-            console.error('Error fetching dashboard data:', error);
-        } finally {
-            setLoading(false);
+            console.error('Error fetching dashboard stats:', error);
         }
+
+        // Fetch Sites
+        try {
+            const sitesRes = await api.get('/sites/assigned');
+            console.log('[Frontend] Received sites:', sitesRes.data);
+            setSites(sitesRes.data.sites || []);
+        } catch (error) {
+            console.error('Error fetching assigned sites:', error);
+        }
+
+        setLoading(false);
     };
 
     // Quick Status Box Component (Matching Admin)
@@ -112,8 +125,14 @@ const EmployeeDashboardScreen = () => {
                         }} />
                     )}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.profileBtn} onPress={logout}>
+                <TouchableOpacity style={styles.profileBtn} onPress={() => navigation.navigate('EmployeeProfile')}>
                     <Text style={styles.profileText}>{user?.name?.charAt(0) || 'E'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.iconBtn, { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' }]}
+                    onPress={logout}
+                >
+                    <Ionicons name="log-out-outline" size={24} color="#EF4444" />
                 </TouchableOpacity>
             </View>
         </View>
@@ -199,7 +218,7 @@ const EmployeeDashboardScreen = () => {
                         icon="time-outline"
                         color="#D32F2F"
                         count={stats.pending}
-                        onPress={() => navigation.navigate('EmployeeTasks')} // Or relevant screen
+                        onPress={() => navigation.navigate('EmployeeTasks')}
                     />
                     <StatusBox
                         label="Completed"
@@ -207,30 +226,64 @@ const EmployeeDashboardScreen = () => {
                         color="#388E3C"
                         count={stats.completed}
                     />
+                    <StatusBox
+                        label="Active Sites"
+                        icon="business-outline"
+                        color="#1976D2"
+                        count={sites.length}
+                    />
+                </View>
+
+                {/* Search Bar */}
+                <View style={{ marginHorizontal: 20, marginBottom: 20, marginTop: 4 }}>
+                    <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 12,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        borderWidth: 1,
+                        borderColor: '#E5E7EB',
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.05,
+                        shadowRadius: 2,
+                        elevation: 2
+                    }}>
+                        <Ionicons name="search-outline" size={20} color="#9CA3AF" />
+                        <TextInput
+                            placeholder="Search Projects..."
+                            placeholderTextColor="#9CA3AF"
+                            style={{ flex: 1, marginLeft: 8, fontSize: 14, color: '#1F2937' }}
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                        />
+                    </View>
                 </View>
 
                 {/* Active Projects List */}
-                <Text style={styles.sectionTitle}>Active Projects</Text>
+                <Text style={styles.sectionTitle}>My Projects</Text>
                 <View style={styles.listContainer}>
-                    {sites.length === 0 ? (
+                    {sites.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 ? (
                         <View style={styles.emptyState}>
-                            <Text style={styles.emptyText}>No active projects assigned</Text>
+                            <Text style={styles.emptyText}>No active projects found</Text>
                         </View>
                     ) : (
-                        sites.map((item) => (
+                        sites.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).map((item) => (
                             <TouchableOpacity
                                 key={item.id}
                                 style={styles.projectListItem}
-                                onPress={() => navigation.navigate('AssignedSites')} // Navigate to list/details
+                                onPress={() => navigation.navigate('EmployeeProjectDetails', { siteId: item.id, siteName: item.name })}
                             >
-                                <View style={styles.listIcon}>
-                                    <Ionicons name="business-outline" size={24} color="#8B0000" />
+                                <View style={[styles.listIcon, { backgroundColor: '#FEF2F2' }]}>
+                                    <Ionicons name="business" size={24} color="#8B0000" />
                                 </View>
                                 <View style={styles.listContent}>
                                     <Text style={styles.listTitle}>{item.name}</Text>
                                     <Text style={styles.listSub}>{item.location}</Text>
                                 </View>
-                                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                                <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
                             </TouchableOpacity>
                         ))
                     )}
@@ -249,7 +302,7 @@ const EmployeeDashboardScreen = () => {
                     <Text style={[styles.navText, activeTab === 'Tasks' && styles.navTextActive]}>My Tasks</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.navItem} onPress={() => alert('Profile coming soon')}>
+                <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('EmployeeProfile')}>
                     <Ionicons name="person-outline" size={22} color={activeTab === 'Profile' ? '#8B0000' : '#9ca3af'} />
                     <Text style={[styles.navText, activeTab === 'Profile' && styles.navTextActive]}>Profile</Text>
                 </TouchableOpacity>
@@ -318,7 +371,7 @@ const styles = StyleSheet.create({
     },
     statusGrid: {
         flexDirection: 'row',
-        gap: 12,
+        gap: 8,
         marginBottom: 24,
     },
     statusBox: {

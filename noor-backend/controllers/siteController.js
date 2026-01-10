@@ -73,7 +73,7 @@ exports.createSite = async (req, res) => {
     try {
         const {
             name, location, startDate, endDate, duration,
-            budget, clientName, clientEmail, clientPhone,
+            budget, site_funds, clientName, clientEmail, clientPhone,
             clientCompany, city, state, country,
             assignedEmployees
         } = req.body;
@@ -85,12 +85,12 @@ exports.createSite = async (req, res) => {
         const [result] = await db.query(
             `INSERT INTO sites (
                 name, location, start_date, end_date, duration, 
-                budget, client_name, client_email, client_phone, 
+                budget, site_funds, client_name, client_email, client_phone, 
                 client_company, city, state, country
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 name, location, isoStartDate, isoEndDate, duration || null,
-                budget || 0, clientName || null, clientEmail || null, clientPhone || null,
+                budget || 0, site_funds || 0, clientName || null, clientEmail || null, clientPhone || null,
                 clientCompany || null, city || null, state || null, country || null
             ]
         );
@@ -216,7 +216,7 @@ const reindexPhases = async (siteId) => {
 // Add custom phase with insertion logic
 exports.addPhase = async (req, res) => {
     try {
-        const { siteId, name, orderNum } = req.body;
+        const { siteId, name, orderNum, budget } = req.body;
         const requestedOrder = parseInt(orderNum) || 1;
 
         // 1. Shift existing phases
@@ -227,11 +227,11 @@ exports.addPhase = async (req, res) => {
 
         // 2. Insert new phase
         await db.query(
-            'INSERT INTO phases (site_id, name, order_num) VALUES (?, ?, ?)',
-            [siteId, name, requestedOrder]
+            'INSERT INTO phases (site_id, name, order_num, budget) VALUES (?, ?, ?, ?)',
+            [siteId, name, requestedOrder, budget || 0]
         );
 
-        // 3. Re-index to ensure continuous sequence (case where orderNum was too high)
+        // 3. Re-index to ensure continuous sequence
         await reindexPhases(siteId);
 
         res.status(201).json({ message: 'Stage added and re-indexed' });
@@ -245,11 +245,11 @@ exports.addPhase = async (req, res) => {
 exports.updatePhase = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, order_num } = req.body;
+        const { name, order_num, budget } = req.body;
 
         await db.query(
-            'UPDATE phases SET name = ?, order_num = ? WHERE id = ?',
-            [name, order_num, id]
+            'UPDATE phases SET name = ?, order_num = ?, budget = ? WHERE id = ?',
+            [name, order_num, budget || 0, id]
         );
 
         res.json({ message: 'Phase updated successfully' });
@@ -773,8 +773,9 @@ exports.updateSite = async (req, res) => {
         const { id } = req.params;
         const {
             name, location, startDate, endDate, duration,
-            budget, clientName, clientEmail, clientPhone,
-            clientCompany, city, state, country
+            budget, site_funds, clientName, clientEmail, clientPhone,
+            clientCompany, city, state, country,
+            phaseUpdates
         } = req.body;
 
         const isoStartDate = ensureIsoDate(startDate);
@@ -783,19 +784,28 @@ exports.updateSite = async (req, res) => {
         await db.query(
             `UPDATE sites SET 
                 name = ?, location = ?, start_date = ?, end_date = ?, duration = ?, 
-                budget = ?, client_name = ?, client_email = ?, client_phone = ?,
+                budget = ?, site_funds = ?, client_name = ?, client_email = ?, client_phone = ?,
                 client_company = ?, city = ?, state = ?, country = ?,
                 updated_at = NOW() 
             WHERE id = ?`,
             [
                 name, location, isoStartDate, isoEndDate, duration || null,
-                budget || 0, clientName || null, clientEmail || null, clientPhone || null,
+                budget || 0, site_funds || 0, clientName || null, clientEmail || null, clientPhone || null,
                 clientCompany || null, city || null, state || null, country || null,
                 id
             ]
         );
 
-        res.json({ message: 'Site updated successfully' });
+        // Bulk update phase budgets if provided
+        if (phaseUpdates && Array.isArray(phaseUpdates)) {
+            for (const p of phaseUpdates) {
+                if (p.id) {
+                    await db.query('UPDATE phases SET budget = ? WHERE id = ? AND site_id = ?', [p.budget || 0, p.id, id]);
+                }
+            }
+        }
+
+        res.json({ message: 'Site and stages updated successfully' });
     } catch (error) {
         console.error('Error updating site:', error);
         res.status(500).json({ message: 'Error updating site' });

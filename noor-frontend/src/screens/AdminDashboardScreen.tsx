@@ -234,6 +234,8 @@ const AdminDashboardScreen = () => {
     const [isEditing, setIsEditing] = useState(false);
     const [editingSiteId, setEditingSiteId] = useState<number | null>(null);
     const [employees, setEmployees] = useState<any[]>([]);
+    const [sitePickerVisible, setSitePickerVisible] = useState(false);
+    const [settingsPhases, setSettingsPhases] = useState<any[]>([]);
 
     // Project Detail Data
     const [projectPhases, setProjectPhases] = useState<any[]>([]);
@@ -303,7 +305,7 @@ const AdminDashboardScreen = () => {
     // Auto-refresh project details when screen gains focus (e.g. returning from assignment)
     useEffect(() => {
         if (isFocused && selectedSite && projectModalVisible) {
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
         }
     }, [isFocused]);
 
@@ -394,6 +396,14 @@ const AdminDashboardScreen = () => {
             setNewPhaseName('');
             setNewPhaseSNo('');
             fetchProjectDetails(selectedSite.id); // Refresh
+
+            // Refresh settings view if open
+            if (projectSettingsVisible && selectedSite?.id) {
+                const response = await api.get(`/sites/${selectedSite.id}`);
+                if (response.data.phases) {
+                    setSettingsPhases(response.data.phases);
+                }
+            }
         } catch (error) {
             console.error('Error adding phase:', error);
             showToast('Failed to add stage', 'error');
@@ -420,7 +430,15 @@ const AdminDashboardScreen = () => {
         try {
             await api.delete(`/phases/${phaseId}`);
             showToast('Stage deleted successfully', 'success');
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
+
+            // Refresh settings view if open
+            if (projectSettingsVisible && selectedSite?.id) {
+                const response = await api.get(`/sites/${selectedSite.id}`);
+                if (response.data.phases) {
+                    setSettingsPhases(response.data.phases);
+                }
+            }
         } catch (error) {
             console.error('Error deleting phase:', error);
             showToast('Failed to delete stage', 'error');
@@ -446,7 +464,7 @@ const AdminDashboardScreen = () => {
         try {
             await api.delete(`/tasks/${taskId}`);
             showToast('Task deleted successfully', 'success');
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
         } catch (error) {
             console.error('Error deleting task:', error);
             showToast('Failed to delete task', 'error');
@@ -468,7 +486,7 @@ const AdminDashboardScreen = () => {
             showToast('Task added successfully', 'success');
             setAddTaskModalVisible(false);
             setNewTaskName('');
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
         } catch (error) {
             console.error('Error adding task:', error);
             showToast('Failed to add task', 'error');
@@ -503,7 +521,7 @@ const AdminDashboardScreen = () => {
 
             // Ensure the specific project is still selected (it should be in state, but safe to verify)
             if (selectedSite?.id) {
-                fetchProjectDetails(selectedSite.id);
+                if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
             }
         } catch (error: any) {
             console.error('Error updating task:', error);
@@ -568,7 +586,8 @@ const AdminDashboardScreen = () => {
         clientPhone: '',
         startDate: '',
         endDate: '',
-        budget: ''
+        budget: '',
+        siteFunds: ''
     });
 
     // State for Task Assignment / Details Modal
@@ -580,11 +599,11 @@ const AdminDashboardScreen = () => {
         setCreateModalVisible(true);
     };
 
-    const handleEditProject = (site: any) => {
+    const handleOpenSettings = async (site: any) => {
         setIsEditing(true);
         setEditingSiteId(site.id);
+        setSelectedSite(site);
 
-        // Format dates for the form (DD/MM/YYYY)
         const formatForForm = (dateIso: string) => {
             if (!dateIso) return '';
             const d = new Date(dateIso);
@@ -606,11 +625,27 @@ const AdminDashboardScreen = () => {
             clientPhone: site.client_phone || '',
             startDate: formatForForm(site.start_date),
             endDate: formatForForm(site.end_date),
-            budget: site.budget ? String(site.budget) : ''
+            budget: site.budget ? String(site.budget) : '',
+            siteFunds: site.site_funds ? String(site.site_funds) : ''
         });
 
-        // setProjectSettingsVisible(false); // Close settings modal - KEEP OPEN to return to it
-        setCreateModalVisible(true);     // Open create/edit modal
+        setProjectSettingsVisible(true);
+
+        // Fetch full site details including phases
+        try {
+            const response = await api.get(`/sites/${site.id}`);
+            if (response.data.phases) {
+                setSettingsPhases(response.data.phases);
+            }
+        } catch (error) {
+            console.error('Error fetching site details for settings:', error);
+        }
+    };
+
+    const handleEditProject = (site: any) => {
+        handleOpenSettings(site);
+        setProjectSettingsVisible(false); // Close settings if navigating to the specific edit modal
+        setCreateModalVisible(true);
     };
 
     const handleCloseCreateModal = () => {
@@ -620,7 +655,7 @@ const AdminDashboardScreen = () => {
         setFormData({
             name: '', address: '', city: '', state: '', country: '',
             clientName: '', clientCompany: '', clientEmail: '', clientPhone: '',
-            startDate: '', endDate: '', budget: ''
+            startDate: '', endDate: '', budget: '', siteFunds: ''
         });
     };
 
@@ -647,6 +682,8 @@ const AdminDashboardScreen = () => {
                 location: formData.address,
                 startDate: formatDateForApi(formData.startDate),
                 endDate: formatDateForApi(formData.endDate),
+                site_funds: formData.siteFunds,
+                phaseUpdates: settingsPhases.map(p => ({ id: p.id, budget: parseFloat(String(p.budget)) || 0 }))
             };
 
             if (isEditing && editingSiteId) {
@@ -664,7 +701,8 @@ const AdminDashboardScreen = () => {
                         client_name: payload.clientName,
                         client_email: payload.clientEmail,
                         client_phone: payload.clientPhone,
-                        budget: payload.budget
+                        budget: payload.budget,
+                        site_funds: payload.site_funds
                     }));
                 }
             } else {
@@ -790,7 +828,7 @@ const AdminDashboardScreen = () => {
             setEditPhaseModalVisible(false);
             setEditingPhaseId(null);
             setEditingPhaseName('');
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
         } catch (error: any) {
             console.error('Error updating phase:', error);
             showToast('Failed to update phase', 'error');
@@ -823,7 +861,7 @@ const AdminDashboardScreen = () => {
         try {
             await api.put(`/tasks/${task.id}/approve`);
             setTaskModalVisible(false);
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
             Alert.alert('Success', 'Task approved and marked as completed.');
         } catch (error) {
             console.error('Error approving task:', error);
@@ -836,7 +874,7 @@ const AdminDashboardScreen = () => {
             // Simplified reject for now (no reason prompt yet, or hardcoded)
             await api.put(`/tasks/${task.id}/reject`, { reason: 'Admin requested changes' });
             setTaskModalVisible(false);
-            fetchProjectDetails(selectedSite.id);
+            if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
             Alert.alert('Success', 'Changes requested. Task reverted to In Progress.');
         } catch (error) {
             console.error('Error rejecting task:', error);
@@ -851,7 +889,7 @@ const AdminDashboardScreen = () => {
                 await api.delete(`/tasks/${taskId}`);
                 showToast('Task deleted successfully', 'success');
                 if (selectedSite?.id) {
-                    fetchProjectDetails(selectedSite.id);
+                    if (selectedSite?.id) fetchProjectDetails(selectedSite.id);
                 }
             } catch (error) {
                 console.error('Error deleting task:', error);
@@ -1380,8 +1418,11 @@ const AdminDashboardScreen = () => {
                             <Ionicons name="arrow-back" size={24} color="#374151" />
                         </TouchableOpacity>
                         <Text style={styles.modalTitle}>{selectedSite?.name}</Text>
-                        <TouchableOpacity onPress={() => setProjectSettingsVisible(true)}>
-                            <Ionicons name="settings-outline" size={24} color="#374151" />
+                        <TouchableOpacity
+                            style={styles.detailsButton}
+                            onPress={() => handleOpenSettings(selectedSite)}
+                        >
+                            <Text style={styles.detailsButtonText}>Details</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -1660,10 +1701,10 @@ const AdminDashboardScreen = () => {
                         </View>
                     </View>
                 </View>
-            </Modal >
+            </Modal>
 
             {/* Edit Phase Modal */}
-            < Modal
+            <Modal
                 visible={editPhaseModalVisible}
                 transparent={true}
                 animationType="fade"
@@ -1695,10 +1736,10 @@ const AdminDashboardScreen = () => {
                         </View>
                     </View>
                 </View>
-            </Modal >
+            </Modal>
 
             {/* Add Task Modal (Small) */}
-            < Modal
+            <Modal
                 visible={addTaskModalVisible}
                 transparent={true}
                 animationType="fade"
@@ -1730,10 +1771,10 @@ const AdminDashboardScreen = () => {
                         </View>
                     </View>
                 </View>
-            </Modal >
+            </Modal>
 
             {/* Task Edit / Update Modal (Full) */}
-            < Modal
+            <Modal
                 visible={taskModalVisible}
                 transparent={true}
                 animationType="slide"
@@ -1881,7 +1922,7 @@ const AdminDashboardScreen = () => {
                         </View>
                     </View>
                 </View>
-            </Modal >
+            </Modal>
 
 
             {/* Bottom Navigation */}
@@ -1912,140 +1953,9 @@ const AdminDashboardScreen = () => {
             </View >
 
 
-            {/* Project Settings Modal */}
-            < Modal
-                animationType="slide"
-                transparent={false}
-                visible={projectSettingsVisible}
-                onRequestClose={() => setProjectSettingsVisible(false)}
-            >
-                <SafeAreaView style={styles.settingsModalContainer}>
-                    <StatusBar barStyle="light-content" backgroundColor="#1e3a8a" />
-                    <View style={styles.settingsHeader}>
-                        <TouchableOpacity onPress={() => {
-                            setProjectSettingsVisible(false);
-                        }} style={styles.headerButton}>
-                            <Ionicons name="chevron-back" size={24} color="#fff" />
-                        </TouchableOpacity>
-                        <Text style={styles.settingsHeaderTitle}>Project Settings</Text>
-                        <View style={{ width: 24 }} />
-                    </View>
-
-                    <ScrollView style={styles.settingsContent}>
-                        {/* Project Info Card */}
-                        <View style={styles.settingsCard}>
-                            <View style={styles.settingsProjectHeader}>
-                                <Text style={styles.settingsProjectName}>{selectedSite?.name}</Text>
-                                <TouchableOpacity onPress={() => handleEditProject(selectedSite)}>
-                                    <Ionicons name="create-outline" size={20} color="#6b7280" />
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="location-outline" size={18} color="#6b7280" style={{ marginRight: 8 }} />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.location}</Text>
-                            </View>
-
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="calendar-outline" size={18} color="#6b7280" style={{ marginRight: 8 }} />
-                                <Text style={styles.settingsInfoText}>
-                                    {selectedSite?.start_date ? formatDate(selectedSite.start_date) : 'Start Date TBD'} to {selectedSite?.end_date ? formatDate(selectedSite.end_date) : 'End Date TBD'}
-                                </Text>
-                            </View>
-
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="card-outline" size={18} color="#6b7280" style={{ marginRight: 8 }} />
-                                <Text style={styles.settingsInfoText}>
-                                    Project Value : {selectedSite?.budget ? `QAR ${parseFloat(selectedSite.budget).toLocaleString()}` : 'QAR 0'}
-                                </Text>
-                            </View>
-                        </View>
-
-                        {/* Client Details */}
-                        <View style={styles.settingsCard}>
-                            <View style={styles.cardHeaderRow}>
-                                <Text style={styles.cardTitle}>Client Details</Text>
-                            </View>
-
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="person-outline" size={18} color="#6b7280" style={{ marginRight: 8 }} />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.client_name || 'No Client Name'}</Text>
-                            </View>
-
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="mail-outline" size={18} color="#6b7280" style={{ marginRight: 8 }} />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.client_email || 'No Client Email'}</Text>
-                            </View>
-
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="call-outline" size={18} color="#6b7280" style={{ marginRight: 8 }} />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.client_phone || 'No Client Phone'}</Text>
-                            </View>
-                        </View>
-
-                        {/* Project Status */}
-                        <View style={styles.settingsCard}>
-                            <View style={styles.cardHeaderRow}>
-                                <Text style={styles.cardTitle}>Project Status</Text>
-                                <TouchableOpacity
-                                    style={{ flexDirection: 'row', alignItems: 'center' }}
-                                    onPress={() => showToast('Status Toggle Coming Soon', 'success')}
-                                >
-                                    <Text style={{ fontSize: 16, color: '#1e3a8a', fontWeight: '600', marginRight: 4 }}>Ongoing</Text>
-                                    <Ionicons name="chevron-down" size={20} color="#1e3a8a" />
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-
-                        {/* Delete Project */}
-                        <View style={[styles.settingsCard, { marginBottom: 40 }]}>
-                            <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center' }}
-                                onPress={() => {
-                                    const handleDelete = async () => {
-                                        try {
-                                            const response = await api.delete(`/sites/${selectedSite.id}`);
-                                            if (response.status === 200 || response.status === 204) {
-                                                showToast('Project deleted successfully', 'success');
-                                                setProjectSettingsVisible(false);
-                                                handleCloseModal();
-                                                fetchSites();
-                                            } else {
-                                                showToast('Delete failed with status: ' + response.status, 'error');
-                                            }
-                                        } catch (error: any) {
-                                            console.error('Delete error:', error);
-                                            const errorMsg = error.response?.data?.message || error.message || 'Unknown error';
-                                            showToast(`Failed to delete project: ${errorMsg}`, 'error');
-                                        }
-                                    };
-
-                                    if (Platform.OS === 'web') {
-                                        if (window.confirm(`Are you sure you want to delete "${selectedSite?.name}"? This action cannot be undone.`)) {
-                                            handleDelete();
-                                        }
-                                    } else {
-                                        Alert.alert(
-                                            "Delete Project",
-                                            `Are you sure you want to delete "${selectedSite?.name}"? This action cannot be undone.`,
-                                            [
-                                                { text: "Cancel", style: "cancel" },
-                                                { text: "Delete", style: "destructive", onPress: handleDelete }
-                                            ]
-                                        );
-                                    }
-                                }}
-                            >
-                                <Ionicons name="trash-outline" size={24} color="#ef4444" style={{ marginRight: 12 }} />
-                                <Text style={{ fontSize: 16, color: '#ef4444', fontWeight: '500' }}>Delete Project</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </ScrollView>
-                </SafeAreaView>
-            </Modal >
 
             {/* Create Project Modal */}
-            < Modal
+            <Modal
                 visible={createModalVisible}
                 animationType="slide"
                 transparent={false}
@@ -2192,7 +2102,7 @@ const AdminDashboardScreen = () => {
 
                     </ScrollView>
                 </SafeAreaView>
-            </Modal >
+            </Modal>
 
             {/* Custom Components Overlay (Moved to end for correct layering) */}
             < CustomToast
@@ -2232,7 +2142,7 @@ const AdminDashboardScreen = () => {
                 )}
             </Modal>
 
-            {/* Project Settings Modal */}
+            {/* Project Settings Modal - Editable Version */}
             <Modal
                 visible={projectSettingsVisible}
                 animationType="slide"
@@ -2244,86 +2154,270 @@ const AdminDashboardScreen = () => {
                         <TouchableOpacity onPress={() => setProjectSettingsVisible(false)}>
                             <Ionicons name="arrow-back" size={24} color="#374151" />
                         </TouchableOpacity>
-                        <Text style={styles.settingsHeaderTitle}>Project Settings</Text>
-                        <View style={{ width: 24 }} />
+                        <Text style={styles.settingsHeaderTitle}>Configuration Details</Text>
+                        <TouchableOpacity
+                            style={styles.saveSettingsBtn}
+                            onPress={async () => {
+                                await submitCreateProject();
+                                setProjectSettingsVisible(false);
+                            }}
+                        >
+                            <Text style={styles.saveSettingsText}>Save</Text>
+                        </TouchableOpacity>
                     </View>
 
                     <ScrollView style={styles.settingsContent}>
-                        {/* Project Info Card */}
+                        {/* 1. Main Project Details */}
                         <View style={styles.settingsCard}>
-                            <View style={styles.settingsProjectHeader}>
-                                <Text style={styles.settingsProjectName}>{selectedSite?.name}</Text>
+                            <View style={styles.cardHeaderRow}>
+                                <Text style={styles.cardTitle}>Project Information</Text>
+                                <Ionicons name="business" size={18} color="#8B0000" />
                             </View>
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="location-outline" size={16} color="#6b7280" />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.location || 'chennai'}</Text>
+
+                            <View style={{ marginBottom: 16 }}>
+                                <Text style={styles.settingsLabel}>Project Name</Text>
+                                <TextInput
+                                    style={styles.settingsInput}
+                                    value={formData.name}
+                                    onChangeText={(t) => handleInputChange('name', t)}
+                                    placeholder="Enter Project Name"
+                                    placeholderTextColor="#94a3b8"
+                                />
                             </View>
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="calendar-outline" size={16} color="#6b7280" />
-                                <Text style={styles.settingsInfoText}>
-                                    {selectedSite?.start_date ? new Date(selectedSite.start_date).toLocaleDateString() : 'N/A'} to {selectedSite?.end_date ? new Date(selectedSite.end_date).toLocaleDateString() : '12-Jan-2025'}
-                                </Text>
+
+                            <View style={{ marginBottom: 16 }}>
+                                <Text style={styles.settingsLabel}>Site Location</Text>
+                                <TextInput
+                                    style={styles.settingsInput}
+                                    value={formData.address}
+                                    onChangeText={(t) => handleInputChange('address', t)}
+                                    placeholder="Enter Full Address"
+                                    placeholderTextColor="#94a3b8"
+                                />
                             </View>
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="cash-outline" size={16} color="#6b7280" />
-                                <Text style={styles.settingsInfoText}>
-                                    Project Value: QAR {selectedSite?.budget ? Number(selectedSite.budget).toLocaleString() : '10,00,000'}
-                                </Text>
+
+                            <View style={{ flexDirection: 'row', gap: 12 }}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.settingsLabel}>Start Date</Text>
+                                    <TouchableOpacity
+                                        style={styles.settingsInputContainer}
+                                        onPress={() => openDatePicker('project_start', 'Start Date')}
+                                    >
+                                        <Text style={styles.settingsInputText}>{formData.startDate || 'DD/MM/YYYY'}</Text>
+                                        <Ionicons name="calendar-outline" size={16} color="#64748b" />
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.settingsLabel}>End Date</Text>
+                                    <TouchableOpacity
+                                        style={styles.settingsInputContainer}
+                                        onPress={() => openDatePicker('project_end', 'End Date')}
+                                    >
+                                        <Text style={styles.settingsInputText}>{formData.endDate || 'DD/MM/YYYY'}</Text>
+                                        <Ionicons name="calendar-outline" size={16} color="#64748b" />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
                         </View>
 
-                        {/* Client Details Card */}
+                        {/* 2. Client Details Card */}
                         <View style={styles.settingsCard}>
                             <View style={styles.cardHeaderRow}>
                                 <Text style={styles.cardTitle}>Client Details</Text>
+                                <Ionicons name="person" size={18} color="#8B0000" />
                             </View>
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="person-outline" size={16} color="#6b7280" />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.client_name || 'bavishika'}</Text>
-                            </View>
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="mail-outline" size={16} color="#6b7280" />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.client_email || 'bavishika@gmail.com'}</Text>
-                            </View>
-                            <View style={styles.settingsInfoRow}>
-                                <Ionicons name="call-outline" size={16} color="#6b7280" />
-                                <Text style={styles.settingsInfoText}>{selectedSite?.client_phone || '123467890'}</Text>
+
+                            <View style={isMobile ? { flexDirection: 'column' } : { flexDirection: 'row', gap: 16 }}>
+                                <View style={{ flex: 1, marginBottom: 12 }}>
+                                    <Text style={styles.settingsLabel}>Client Name</Text>
+                                    <TextInput
+                                        style={styles.settingsInput}
+                                        value={formData.clientName}
+                                        onChangeText={(t) => handleInputChange('clientName', t)}
+                                        placeholder="Name"
+                                        placeholderTextColor="#94a3b8"
+                                    />
+                                </View>
+                                <View style={{ flex: 1, marginBottom: 12 }}>
+                                    <Text style={styles.settingsLabel}>Phone Number</Text>
+                                    <TextInput
+                                        style={styles.settingsInput}
+                                        value={formData.clientPhone}
+                                        onChangeText={(t) => handleInputChange('clientPhone', t)}
+                                        keyboardType="phone-pad"
+                                        placeholder="Phone"
+                                        placeholderTextColor="#94a3b8"
+                                    />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.settingsLabel}>Email Address</Text>
+                                    <TextInput
+                                        style={styles.settingsInput}
+                                        value={formData.clientEmail}
+                                        onChangeText={(t) => handleInputChange('clientEmail', t)}
+                                        keyboardType="email-address"
+                                        placeholder="Email"
+                                        placeholderTextColor="#94a3b8"
+                                    />
+                                </View>
                             </View>
                         </View>
 
-                        {/* Project Status Card */}
-                        <View style={styles.settingsCard}>
+                        {/* 3. Stage Wise Amount Allocation Card */}
+                        <View style={[styles.settingsCard, { marginTop: 16 }]}>
                             <View style={styles.cardHeaderRow}>
-                                <Text style={styles.cardTitle}>Project Status</Text>
-                                <TouchableOpacity>
-                                    <Ionicons name="create-outline" size={20} color="#8B0000" />
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.settingsInfoRow}>
-                                <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7' }]}>
-                                    <Text style={[styles.statusText, { color: '#166534' }]}>Ongoing</Text>
+                                <View style={{ flex: 1 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <Text style={styles.cardTitle}>Stage Wise Amount Allocation</Text>
+                                        <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7', paddingVertical: 2, paddingHorizontal: 8 }]}>
+                                            <Text style={[styles.statusText, { color: '#166534', fontSize: 10 }]}>Ongoing</Text>
+                                        </View>
+                                    </View>
+                                    <Text style={{ fontSize: 12, color: '#64748b' }}>Project Value: QAR {(parseFloat(formData.budget) || 0).toLocaleString()} • {settingsPhases.length} Stages</Text>
                                 </View>
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <TouchableOpacity
+                                        style={{
+                                            backgroundColor: '#f1f5f9',
+                                            paddingHorizontal: 12,
+                                            paddingVertical: 8,
+                                            borderRadius: 8,
+                                            justifyContent: 'center'
+                                        }}
+                                        onPress={() => setSitePickerVisible(true)}
+                                    >
+                                        <Ionicons name="swap-horizontal" size={18} color="#64748b" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={{
+                                            backgroundColor: '#166534',
+                                            paddingHorizontal: 12,
+                                            paddingVertical: 8,
+                                            borderRadius: 8,
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            gap: 6,
+                                            elevation: 2,
+                                            shadowColor: '#000',
+                                            shadowOffset: { width: 0, height: 1 },
+                                            shadowOpacity: 0.1,
+                                            shadowRadius: 2
+                                        }}
+                                        onPress={() => setPhaseModalVisible(true)}
+                                    >
+                                        <Ionicons name="add-circle" size={18} color="#fff" />
+                                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Add Stage</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            {/* Project Value & Allocation Progress */}
+                            <View style={{ marginTop: 20, backgroundColor: '#f8fafc', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                                <View style={isMobile ? { flexDirection: 'column' } : { flexDirection: 'row', gap: 16, marginBottom: 16 }}>
+                                    <View style={{ flex: 1, marginBottom: isMobile ? 12 : 0 }}>
+                                        <Text style={[styles.settingsLabel, { marginBottom: 6 }]}>Master Project Value (Total Budget)</Text>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12 }}>
+                                            <Text style={{ color: '#8B0000', fontSize: 14, fontWeight: '700', marginRight: 6 }}>QAR</Text>
+                                            <TextInput
+                                                style={{ flex: 1, paddingVertical: 12, fontSize: 16, fontWeight: '800', color: '#8B0000' }}
+                                                value={formData.budget}
+                                                onChangeText={(t) => {
+                                                    handleInputChange('budget', t);
+                                                    handleInputChange('siteFunds', t);
+                                                }}
+                                                keyboardType="numeric"
+                                                placeholder="0.00"
+                                            />
+                                        </View>
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={[styles.settingsLabel, { marginBottom: 6 }]}>Allocation Progress</Text>
+                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 4 }}>
+                                            <Text style={{ fontSize: 18, fontWeight: '800', color: '#166534' }}>
+                                                {Math.min(100, (settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) / (parseFloat(formData.budget) || 1) * 100)).toFixed(1)}%
+                                            </Text>
+                                        </View>
+                                        <View style={{ height: 10, backgroundColor: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}>
+                                            <View
+                                                style={{
+                                                    height: '100%',
+                                                    width: `${Math.min(100, (settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) / (parseFloat(formData.budget) || 1) * 100))}%`,
+                                                    backgroundColor: settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) > (parseFloat(formData.budget) || 0) ? '#ef4444' : '#166534',
+                                                    borderRadius: 5
+                                                }}
+                                            />
+                                        </View>
+                                    </View>
+                                </View>
+
+                                <View style={{ flexDirection: 'row', gap: 12 }}>
+                                    <View style={{ flex: 1, backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                                        <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 4 }}>Allocated</Text>
+                                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#166534' }}>QAR {settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0).toLocaleString()}</Text>
+                                    </View>
+                                    <View style={{ flex: 1, backgroundColor: settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) > (parseFloat(formData.budget) || 0) ? '#fef2f2' : '#f0fdf4', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) > (parseFloat(formData.budget) || 0) ? '#fecaca' : '#bbf7d0' }}>
+                                        <Text style={{ fontSize: 10, color: settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) > (parseFloat(formData.budget) || 0) ? '#b91c1c' : '#15803d', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 4 }}>Remaining</Text>
+                                        <Text style={{ fontSize: 14, fontWeight: '700', color: settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) > (parseFloat(formData.budget) || 0) ? '#ef4444' : '#166534' }}>
+                                            QAR {Math.max(0, (parseFloat(formData.budget) || 0) - settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0)).toLocaleString()}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                {settingsPhases.reduce((sum, p) => sum + (parseFloat(String(p.budget)) || 0), 0) > (parseFloat(formData.budget) || 0) && (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, backgroundColor: '#fef2f2', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#fee2e2' }}>
+                                        <Ionicons name="warning" size={16} color="#ef4444" />
+                                        <Text style={{ fontSize: 12, color: '#b91c1c', fontWeight: '600' }}>Warning: Allocation exceeds project limit</Text>
+                                    </View>
+                                )}
+                            </View>
+
+                            <View style={{ marginTop: 12 }}>
+                                {settingsPhases.map((phase, index) => (
+                                    <View key={phase.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                                        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
+                                            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#64748b' }}>{index + 1}</Text>
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                                <Text style={[styles.settingsLabel, { marginBottom: 0 }]}>{phase.name}</Text>
+                                                <View style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>
+                                                        {((parseFloat(String(phase.budget)) || 0) / (parseFloat(formData.budget) || 1) * 100).toFixed(1)}%
+                                                    </Text>
+                                                </View>
+                                            </View>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12 }}>
+                                                    <Text style={{ color: '#94a3b8', fontSize: 14, fontWeight: '600', marginRight: 6 }}>QAR</Text>
+                                                    <TextInput
+                                                        style={{ flex: 1, paddingVertical: 10, fontSize: 15, fontWeight: '700', color: '#1e293b' }}
+                                                        value={String(phase.budget || '')}
+                                                        onChangeText={(val) => setSettingsPhases(prev => prev.map(p => p.id === phase.id ? { ...p, budget: val } : p))}
+                                                        keyboardType="numeric"
+                                                        placeholder="0.00"
+                                                        placeholderTextColor="#cbd5e1"
+                                                    />
+                                                </View>
+                                                <TouchableOpacity
+                                                    onPress={() => handleDeletePhase(phase.id, phase.name)}
+                                                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center' }}
+                                                >
+                                                    <Ionicons name="trash" size={18} color="#ef4444" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
+                                    </View>
+                                ))}
                             </View>
                         </View>
 
                         {/* Danger Zone */}
                         <TouchableOpacity
-                            style={{
-                                backgroundColor: '#FEE2E2',
-                                padding: 16,
-                                borderRadius: 12,
-                                marginTop: 24,
-                                marginBottom: 32,
-                                borderWidth: 1,
-                                borderColor: '#FCA5A5',
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                justifyContent: 'space-between'
-                            }}
+                            style={styles.dangerZoneBtn}
                             onPress={() => {
                                 Alert.alert(
                                     'Delete Project',
-                                    'Are you sure you want to delete this project? This action cannot be undone.',
+                                    'Are you sure you want to delete this project?',
                                     [
                                         { text: 'Cancel', style: 'cancel' },
                                         {
@@ -2335,9 +2429,8 @@ const AdminDashboardScreen = () => {
                                                     setProjectSettingsVisible(false);
                                                     setProjectModalVisible(false);
                                                     fetchSites();
-                                                    Alert.alert('Success', 'Project deleted successfully');
+                                                    showToast('Project deleted', 'success');
                                                 } catch (error) {
-                                                    console.error('Error deleting project:', error);
                                                     Alert.alert('Error', 'Failed to delete project');
                                                 }
                                             }
@@ -2347,17 +2440,63 @@ const AdminDashboardScreen = () => {
                             }}
                         >
                             <View>
-                                <Text style={{ fontSize: 16, fontWeight: '600', color: '#991B1B', marginBottom: 4 }}>
-                                    Delete Project
-                                </Text>
-                                <Text style={{ fontSize: 13, color: '#7F1D1D' }}>
-                                    Permanently remove this project and all its data
-                                </Text>
+                                <Text style={styles.dangerZoneTitle}>Delete Project</Text>
+                                <Text style={styles.dangerZoneSubtitle}>Permanently remove all project data</Text>
                             </View>
                             <Ionicons name="trash-outline" size={24} color="#DC2626" />
                         </TouchableOpacity>
                     </ScrollView>
                 </SafeAreaView>
+            </Modal>
+
+            <Modal
+                visible={sitePickerVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setSitePickerVisible(false)}
+            >
+                <View style={styles.datePickerOverlay}>
+                    <View style={[styles.datePickerContent, { maxHeight: 500, width: '90%' }]}>
+                        <View style={styles.datePickerHeader}>
+                            <Text style={styles.datePickerTitle}>Select Site</Text>
+                            <TouchableOpacity onPress={() => setSitePickerVisible(false)}>
+                                <Ionicons name="close" size={24} color="#6b7280" />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView>
+                            {sites.map((site: any) => (
+                                <TouchableOpacity
+                                    key={site.id}
+                                    style={{
+                                        padding: 16,
+                                        borderBottomWidth: 1,
+                                        borderBottomColor: '#f3f4f6',
+                                        backgroundColor: editingSiteId === site.id ? '#f8fafc' : 'transparent'
+                                    }}
+                                    onPress={() => {
+                                        handleOpenSettings(site);
+                                        setSitePickerVisible(false);
+                                    }}
+                                >
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <View>
+                                            <Text style={{ fontSize: 16, color: '#111827', fontWeight: editingSiteId === site.id ? '700' : '400' }}>
+                                                {site.name}
+                                            </Text>
+                                            <Text style={{ fontSize: 12, color: '#6b7280' }}>{site.location || 'No Location'}</Text>
+                                        </View>
+                                        <Text style={{ fontSize: 14, color: '#8B0000', fontWeight: 'bold' }}>
+                                            QAR {Number(site.budget || 0).toLocaleString()}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                            {sites.length === 0 && (
+                                <Text style={{ padding: 20, textAlign: 'center', color: '#6b7280' }}>No sites found</Text>
+                            )}
+                        </ScrollView>
+                    </View>
+                </View>
             </Modal>
 
             {/* Employee/Worker Modal */}
@@ -2625,7 +2764,7 @@ const AdminDashboardScreen = () => {
                     </View>
                 </TouchableOpacity>
             </Modal>
-        </SafeAreaView >
+        </SafeAreaView>
     );
 };
 
@@ -2647,13 +2786,17 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     headerTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#111827',
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1e293b',
+        letterSpacing: -0.5,
     },
     headerSubtitle: {
-        fontSize: 12,
-        color: '#6b7280',
+        fontSize: 13,
+        color: '#64748b',
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
     },
     headerRight: {
         flexDirection: 'row',
@@ -2706,35 +2849,37 @@ const styles = StyleSheet.create({
     newStatusRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        marginTop: 16,
+        paddingHorizontal: 20,
+        marginTop: 20,
+        gap: 12,
     },
     newStatusCard: {
-        width: '30%',
+        flex: 1,
         backgroundColor: '#FFFFFF',
-        borderRadius: 12,
-        padding: 12,
+        borderRadius: 16,
+        padding: 16,
         alignItems: 'center',
+        justifyContent: 'center',
         borderWidth: 1,
-        borderColor: '#fef2f2',
-        shadowColor: '#8B0000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 2,
+        borderColor: '#f3f4f6',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 10,
+        elevation: 3,
     },
     statusCardIconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 48,
+        height: 48,
+        borderRadius: 12,
         backgroundColor: '#fef2f2',
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 8,
+        marginBottom: 10,
     },
     statusCardLabel: {
-        fontSize: 12,
-        fontWeight: '600',
+        fontSize: 13,
+        fontWeight: '700',
         color: '#374151',
     },
 
@@ -2748,29 +2893,32 @@ const styles = StyleSheet.create({
     newFilterChip: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#fef2f2',
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#fee2e2',
+        backgroundColor: '#8B0000',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 12,
         gap: 6,
+        shadowColor: '#8B0000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
     },
     filterChipText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#8B0000',
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#FFFFFF',
     },
     newSearchBar: {
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#FFFFFF',
-        borderRadius: 8,
-        paddingHorizontal: 12,
-        height: 40,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        height: 44,
         borderWidth: 1,
-        borderColor: '#f3f4f6',
+        borderColor: '#f1f5f9',
     },
     newSearchInput: {
         flex: 1,
@@ -2779,14 +2927,14 @@ const styles = StyleSheet.create({
         color: '#1f2937',
     },
     newFilterIconButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 8,
+        width: 44,
+        height: 44,
+        borderRadius: 12,
         backgroundColor: '#FFFFFF',
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: '#f3f4f6',
+        borderColor: '#f1f5f9',
     },
 
     newActiveProjectsTitle: {
@@ -2802,21 +2950,27 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#FFFFFF',
         marginHorizontal: 16,
-        marginBottom: 8,
-        padding: 16,
-        borderRadius: 12,
+        marginBottom: 12,
+        padding: 18,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#f3f4f6',
+        borderColor: '#f1f5f9',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 8,
+        elevation: 2,
     },
     newProjectName: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#1f2937',
-        marginBottom: 2,
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#1e293b',
+        marginBottom: 4,
     },
     newProjectLocation: {
-        fontSize: 12,
-        color: '#9ca3af',
+        fontSize: 13,
+        color: '#64748b',
+        fontWeight: '500',
     },
     newEmptyState: {
         padding: 40,
@@ -2830,23 +2984,25 @@ const styles = StyleSheet.create({
     newBottomNav: {
         flexDirection: 'row',
         justifyContent: 'center',
-        paddingVertical: 12,
+        paddingVertical: 14,
         backgroundColor: '#FFFFFF',
         borderTopWidth: 1,
-        borderTopColor: '#f3f4f6',
-        gap: 100,
+        borderTopColor: '#f1f5f9',
+        gap: 80,
     },
     newNavItem: {
         alignItems: 'center',
+        paddingHorizontal: 12,
     },
     newNavText: {
-        fontSize: 10,
-        marginTop: 4,
-        color: '#9ca3af',
+        fontSize: 11,
+        marginTop: 5,
+        color: '#94a3b8',
+        fontWeight: '600',
     },
     newNavTextActive: {
         color: '#8B0000',
-        fontWeight: 'bold',
+        fontWeight: '800',
     },
 
     /* UTILITY STYLES - RESTORED */
@@ -3002,6 +3158,81 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         color: '#111827',
+    },
+    settingsLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#64748b',
+        marginBottom: 6,
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+    },
+    settingsInput: {
+        fontSize: 15,
+        color: '#1e293b',
+        fontWeight: '600',
+        backgroundColor: '#f8fafc',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    settingsInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#f8fafc',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    settingsInputText: {
+        fontSize: 15,
+        color: '#1e293b',
+        fontWeight: '600',
+    },
+    saveSettingsBtn: {
+        backgroundColor: '#8B0000',
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        borderRadius: 10,
+        shadowColor: '#8B0000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    saveSettingsText: {
+        color: '#fff',
+        fontWeight: '800',
+        fontSize: 14,
+        textTransform: 'uppercase',
+    },
+    dangerZoneBtn: {
+        backgroundColor: '#fef2f2',
+        padding: 20,
+        borderRadius: 16,
+        marginTop: 24,
+        marginBottom: 40,
+        borderWidth: 1,
+        borderColor: '#fee2e2',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    dangerZoneTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#991b1b',
+        marginBottom: 4,
+    },
+    dangerZoneSubtitle: {
+        fontSize: 13,
+        color: '#b91c1c',
+        opacity: 0.8,
     },
     container: {
         flex: 1,
@@ -3211,6 +3442,21 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: 'bold',
         color: '#111827',
+    },
+    detailsButton: {
+        backgroundColor: '#f8fafc',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#e2e8f0',
+    },
+    detailsButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#475569',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
     },
 
     listContainer: {
